@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # --- BROKER SETOR 1 ---
+  broker-app-1:
+    build: ./broker
+    container_name: broker-app-1
+    hostname: broker1
+    ports:
+      - "1053:1053" # Porta TCP para Drones/Sensores
+    networks:
+      - pbl-net
+    environment:
+      - COMET_URL=comet-1:26657
+
+  comet-1:
+    image: cometbft/cometbft:v0.38.x
+    container_name: comet-1
+    hostname: comet1
+    ports:
+      - "26657:26657" # Porta RPC para submeter transações
+    volumes:
+      - ./dados/comet1:/cometbft
+    command: node --proxy_app=tcp://broker-app-1:26658 --rpc.laddr=tcp://0.0.0.0:26657 --p2p.laddr=tcp://0.0.0.0:26656
+    depends_on:
+      - broker-app-1
+    networks:
+      - pbl-net
+
+  # --- BROKER SETOR 2 ---
+  broker-app-2:
+    build: ./broker
+    container_name: broker-app-2
+    hostname: broker2
+    ports:
+      - "1054:1053"
+    networks:
+      - pbl-net
+    environment:
+      - COMET_URL=comet-1:26657
+
+  comet-2:
+    image: cometbft/cometbft:v0.38.x
+    container_name: comet-2
+    hostname: comet2
+    ports:
+      - "26660:26657"
+    volumes:
+      - ./dados/comet2:/cometbft
+    command: node --proxy_app=tcp://broker-app-2:26658 --rpc.laddr=tcp://0.0.0.0:26657 --p2p.laddr=tcp://0.0.0.0:26656
+    depends_on:
+      - broker-app-2
+    networks:
+      - pbl-net
+
+  # --- BROKER SETOR 3 ---
+  broker-app-3:
+    build: ./broker
+    container_name: broker-app-3
+    hostname: broker3
+    ports:
+      - "1055:1053"
+    networks:
+      - pbl-net
+    environment:
+      - COMET_URL=comet-1:26657
+  comet-3:
+    image: cometbft/cometbft:v0.38.x
+    container_name: comet-3
+    hostname: comet3
+    ports:
+      - "26663:26657"
+    volumes:
+      - ./dados/comet3:/cometbft
+    command: node --proxy_app=tcp://broker-app-3:26658 --rpc.laddr=tcp://0.0.0.0:26657 --p2p.laddr=tcp://0.0.0.0:26656
+    depends_on:
+      - broker-app-3
+    networks:
+      - pbl-net
+
+  # --- BROKER SETOR 4 ---
+  broker-app-4:
+    build: ./broker
+    container_name: broker-app-4
+    hostname: broker4
+    ports:
+      - "1056:1053"
+    networks:
+      - pbl-net
+    environment:
+      - COMET_URL=comet-1:26657
+
+  comet-4:
+    image: cometbft/cometbft:v0.38.x
+    container_name: comet-4
+    hostname: comet4
+    ports:
+      - "26666:26657"
+    volumes:
+      - ./dados/comet4:/cometbft
+    command: node --proxy_app=tcp://broker-app-4:26658 --rpc.laddr=tcp://0.0.0.0:26657 --p2p.laddr=tcp://0.0.0.0:26656
+    depends_on:
+      - broker-app-4
+    networks:
+      - pbl-net
+
+networks:
+  pbl-net:
+    driver: bridge
+
+volumes:
+  # Volumes para persistência dos dados e logs imutáveis
+  dados-comet1:
+  dados-comet2:
+  dados-comet3:
+  dados-comet4:
