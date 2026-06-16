@@ -2,135 +2,226 @@ package main
 
 import (
 	"bufio"
+	"crypto/ed25519"
+	cryptorand "crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"net"
+	"io"
+	"log"
+	"math/rand"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// O mapa de setores
-var setores map[string]string
+type TipoBloco string
 
-var tiposSensor = []string{
-	"bloqueio_rota",
-	"deriva",
-	"congestionamento",
-	"objeto_nao_identificado",
-	"inspecao_visual",
-	"risco_ambiental",
+const (
+	BlocoRegistro      TipoBloco = "REGISTRO"
+	BlocoEmissao       TipoBloco = "EMISSAO"
+	BlocoTransacao     TipoBloco = "TRANSACAO"
+	BlocoTransferencia TipoBloco = "TRANSFERENCIA"
+)
+
+type PacoteBase struct {
+	Tipo TipoBloco       `json:"tipo"`
+	Data json.RawMessage `json:"data"`
 }
 
-var criticidades = []string{
-	"baixa",
-	"media",
-	"alta",
+type PayloadRegistro struct {
+	Empresa string `json:"empresa"`
 }
 
-func escolher(titulo string, opcoes []string) string {
+type PayloadEmissao struct {
+	Empresa string `json:"empresa"`
+	Valor   int    `json:"valor"`
+}
+
+type PayloadTransacao struct {
+	Empresa      string `json:"empresa"`
+	Valor        int    `json:"valor"`
+	Criticidade  string `json:"criticidade"`
+	Acao         string `json:"acao"`
+	Timestamp    string `json:"timestamp"`
+	ChavePublica string `json:"chave_publica"`
+	Assinatura   string `json:"assinatura"`
+}
+
+type PayloadTransferencia struct {
+	Origem       string `json:"origem"`
+	Destino      string `json:"destino"`
+	Valor        int    `json:"valor"`
+	ChavePublica string `json:"chave_publica"`
+	Assinatura   string `json:"assinatura"`
+}
+
+var (
+	chavePublica ed25519.PublicKey
+	chavePrivada ed25519.PrivateKey
+	minhaEmpresa string
+)
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+
+	var err error
+	chavePublica, chavePrivada, err = ed25519.GenerateKey(cryptorand.Reader)
+	if err != nil {
+		log.Fatalf("Erro ao gerar chaves: %v", err)
+	}
+}
+
+func enviarParaCometBFT(pacote PacoteBase) {
+	pacoteBytes, _ := json.Marshal(pacote)
+	txHex := fmt.Sprintf("0x%s", hex.EncodeToString(pacoteBytes))
+	url := fmt.Sprintf("http://127.0.0.1:26657/broadcast_tx_commit?tx=%s", txHex)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("Erro de conexão com o CometBFT: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	// Checa se o CheckTx barrou a transação (Code > 0)
+	if strings.Contains(string(body), `"code":0`) {
+		fmt.Println("Transação aceita e gravada no bloco!")
+	} else {
+		fmt.Printf("Transação REJEITADA pelo nó! Resposta bruta: %s\n", string(body))
+	}
+}
+
+func registrarEmpresa() {
+	txPayload := PayloadRegistro{
+		Empresa: minhaEmpresa,
+	}
+	txBytes, _ := json.Marshal(txPayload)
+
+	fmt.Println("Enviando pedido de registro para a Blockchain (Garantindo 100 créditos)...")
+	enviarParaCometBFT(PacoteBase{Tipo: BlocoRegistro, Data: txBytes})
+}
+
+func transferirCreditos(reader *bufio.Reader) {
+	fmt.Print("Empresa de destino (ex: Navio_B): ")
+	destino, _ := reader.ReadString('\n')
+	destino = strings.TrimSpace(destino)
+
+	fmt.Print("Valor a transferir: ")
+	valorStr, _ := reader.ReadString('\n')
+	valorStr = strings.TrimSpace(valorStr)
+
+	valor, err := strconv.Atoi(valorStr)
+	if err != nil || valor <= 0 {
+		fmt.Println("Valor inválido.")
+		return
+	}
+
+	// Assina a transferência: origem, destino e valor
+	mensagemBruta := fmt.Sprintf("%s:%s:%d", minhaEmpresa, destino, valor)
+	assinaturaBytes := ed25519.Sign(chavePrivada, []byte(mensagemBruta))
+
+	txPayload := PayloadTransferencia{
+		Origem:       minhaEmpresa,
+		Destino:      destino,
+		Valor:        valor,
+		ChavePublica: hex.EncodeToString(chavePublica),
+		Assinatura:   hex.EncodeToString(assinaturaBytes),
+	}
+	txBytes, _ := json.Marshal(txPayload)
+
+	fmt.Printf("Assinando e enviando transferência de %d créditos para %s...\n", valor, destino)
+	enviarParaCometBFT(PacoteBase{Tipo: BlocoTransferencia, Data: txBytes})
+}
+
+func custoPorCriticidade(criticidade string) int {
+	switch criticidade {
+	case "alta":
+		return 3
+	case "media":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func solicitarMissao() {
+
+	tipos := []string{
+		"deriva",
+		"bloqueio_rota",
+		"objeto_nao_identificado",
+		"congestionamento",
+		"inspecao_visual",
+		"risco_ambiental",
+	}
+	criticidades := []string{"baixa", "media", "alta"}
+	tipoSensor := tipos[rand.Intn(len(tipos))]
+	nivelcriticidade := criticidades[rand.Intn(len(criticidades))]
+
+	acao := tipoSensor
+	criticidade := nivelcriticidade
+	valorCusto := custoPorCriticidade(criticidade)
+
+	// Gera um timestamp único em nanosegundos
+	timestampAtual := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Assina incluindo o timestamp
+	mensagemBruta := fmt.Sprintf("%s:%d:%s:%s", minhaEmpresa, valorCusto, acao, timestampAtual)
+	assinaturaBytes := ed25519.Sign(chavePrivada, []byte(mensagemBruta))
+
+	txPayload := PayloadTransacao{
+		Empresa:      minhaEmpresa,
+		Valor:        valorCusto,
+		Criticidade:  criticidade,
+		Acao:         acao,
+		Timestamp:    timestampAtual, // <--- Envia no JSON
+		ChavePublica: hex.EncodeToString(chavePublica),
+		Assinatura:   hex.EncodeToString(assinaturaBytes),
+	}
+	txBytes, _ := json.Marshal(txPayload)
+
+	fmt.Println("Assinando e enviando pedido de missão...")
+	enviarParaCometBFT(PacoteBase{Tipo: BlocoTransacao, Data: txBytes})
+}
+
+func menu() {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Digite o nome da sua Companhia (ex: Navio_A): ")
+	nome, _ := reader.ReadString('\n')
+	minhaEmpresa = strings.TrimSpace(nome)
+
 	for {
-		fmt.Printf("\n=== %s ===\n", titulo)
-		for i, op := range opcoes {
-			fmt.Printf("  [%d] %s\n", i+1, op)
+		fmt.Printf("\n--- TERMINAL DO SENSOR: %s ---\n", minhaEmpresa)
+		fmt.Println("1. Emitir Créditos Iniciais (Imprimir Dinheiro)")
+		fmt.Println("2. Solicitar Missão (Custa 1-3 créditos conforme criticidade)")
+		fmt.Println("3. Transferir Créditos para outra Empresa")
+		fmt.Println("4. Sair")
+		fmt.Print("Escolha uma opção: ")
+
+		opcao, _ := reader.ReadString('\n')
+		opcao = strings.TrimSpace(opcao)
+
+		switch opcao {
+		case "1":
+			registrarEmpresa()
+		case "2":
+			solicitarMissao()
+		case "3":
+			transferirCreditos(reader)
+		case "4":
+			fmt.Println("Saindo...")
+			return
+		default:
+			fmt.Println("Opção inválida.")
 		}
-		fmt.Print("Escolha: ")
-		reader := bufio.NewReader(os.Stdin)
-		linha, _ := reader.ReadString('\n')
-		linha = strings.TrimSpace(linha)
-		n, err := strconv.Atoi(linha)
-		if err == nil && n >= 1 && n <= len(opcoes) {
-			return opcoes[n-1]
-		}
-		fmt.Println("Opção inválida, tente novamente.")
 	}
-}
-
-func escolherSetor() (string, string) {
-	setoresOpts := []string{"Setor 1", "Setor 2", "Setor 3"}
-	escolha := escolher("SETOR", setoresOpts)
-	num := strings.Split(escolha, " ")[1]
-	return num, setores[num]
-}
-
-func enviar(brokerAddr, tipoSensor, criticidade string) {
-	conn, err := net.Dial("tcp", brokerAddr)
-	if err != nil {
-		fmt.Printf("[ERRO] Não foi possível conectar em %s: %v\n", brokerAddr, err)
-		return
-	}
-	defer conn.Close()
-
-	msg := fmt.Sprintf("SENSOR;sensor-manual-%s;%s;%s\n", strings.ReplaceAll(brokerAddr, ":", "-"), tipoSensor, criticidade)
-	_, err = conn.Write([]byte(msg))
-	if err != nil {
-		fmt.Printf("[ERRO] Falha ao enviar: %v\n", err)
-		return
-	}
-	fmt.Printf("\n✔ Enviado para %s → tipo: %s | criticidade: %s\n", brokerAddr, tipoSensor, criticidade)
 }
 
 func main() {
-	// 1. Lê a variável de ambiente IP passada pelo Docker
-	ipBase := os.Getenv("IP")
-	if ipBase == "" {
-		ipBase = "127.0.0.1" // Padrão caso você esqueça de passar o -e
-	}
-
-	// 2. Divide a string onde tiver vírgula
-	ips := strings.Split(ipBase, ",")
-
-	// 3. Monta os setores forçando todos para a porta 1053
-	if len(ips) == 3 {
-		setores = map[string]string{
-			"1": fmt.Sprintf("%s:1053", strings.TrimSpace(ips[0])),
-			"2": fmt.Sprintf("%s:1053", strings.TrimSpace(ips[1])),
-			"3": fmt.Sprintf("%s:1053", strings.TrimSpace(ips[2])),
-		}
-	} else {
-		setores = map[string]string{
-			"1": fmt.Sprintf("%s:1053", strings.TrimSpace(ips[0])),
-			"2": fmt.Sprintf("%s:1053", strings.TrimSpace(ips[0])),
-			"3": fmt.Sprintf("%s:1053", strings.TrimSpace(ips[0])),
-		}
-	}
-
-	fmt.Println("╔══════════════════════════════════════╗")
-	fmt.Println("║     SENSOR MANUAL - MODO CLIENTE     ║")
-	fmt.Println("╚══════════════════════════════════════╝")
-
-	if len(ips) == 3 {
-		fmt.Printf(" Modo Distribuído (3 IPs lidos da variável)\n")
-	} else {
-		fmt.Printf(" Modo Local (IP: %s)\n", ips[0])
-	}
-
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Println("\n----------------------------------------")
-
-		setorNum, brokerAddr := escolherSetor()
-		fmt.Printf("→ Setor %s | Broker: %s\n", setorNum, brokerAddr)
-
-		tipo := escolher("TIPO DE SENSOR", tiposSensor)
-		crit := escolher("CRITICIDADE", criticidades)
-
-		fmt.Printf("\nConfirmar envio?\n  Setor %s | %s | criticidade: %s\n  [s] Sim  [n] Cancelar\n> ", setorNum, tipo, crit)
-		resp, _ := reader.ReadString('\n')
-		resp = strings.TrimSpace(strings.ToLower(resp))
-
-		if resp == "s" || resp == "sim" {
-			enviar(brokerAddr, tipo, crit)
-		} else {
-			fmt.Println("Cancelado.")
-		}
-
-		fmt.Print("\nEnviar outro? [s/n]: ")
-		cont, _ := reader.ReadString('\n')
-		cont = strings.TrimSpace(strings.ToLower(cont))
-		if cont != "s" && cont != "sim" {
-			fmt.Println("Encerrando sensor manual.")
-			break
-		}
-	}
+	fmt.Println("Chave criptográfica gerada para esta sessão.")
+	menu()
 }

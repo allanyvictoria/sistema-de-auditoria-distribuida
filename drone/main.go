@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strings"
@@ -97,13 +98,19 @@ func receberMissao(conn net.Conn, id string) {
 			// simula missão
 			time.Sleep(10 * time.Second)
 
-			// confirma conclusão
-			conn.Write([]byte(fmt.Sprintf("DRONE;%s;CONCLUSAO;\n", id)))
+			// O PRÓPRIO DRONE GERA SEU GPS (Edge Computing)
+			latOrigem := -10.0 + (rand.Float64() * 20.0)
+			lonOrigem := -40.0 + (rand.Float64() * 20.0)
+			latDestino := latOrigem + (rand.Float64() * 2.0)
+			lonDestino := lonOrigem + (rand.Float64() * 2.0)
+			rotaDinamica := fmt.Sprintf("Lat: %.4f, Lon: %.4f -> Lat: %.4f, Lon: %.4f", latOrigem, lonOrigem, latDestino, lonDestino)
+
+			// confirma conclusão mandando a rota no PAYLOAD da mensagem
+			conn.Write([]byte(fmt.Sprintf("DRONE;%s;CONCLUSAO;%s\n", id, rotaDinamica)))
 
 			emMissao = false
-			log.Printf("[DRONE %s] Missão concluída!", id)
+			log.Printf("[DRONE %s] Missão concluída! Rota enviada: %s", id, rotaDinamica)
 		}
-
 	}
 
 }

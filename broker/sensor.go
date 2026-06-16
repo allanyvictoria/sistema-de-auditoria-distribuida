@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,7 +13,20 @@ import (
 	"os"
 )
 
-// função para definir a prioridade da requisição com base na criticidade
+var (
+	chavePublica ed25519.PublicKey
+	chavePrivada ed25519.PrivateKey
+)
+
+func init() {
+	var err error
+	chavePublica, chavePrivada, err = ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		log.Fatalf("Erro ao gerar chaves criptográficas: %v", err)
+	}
+	log.Printf("[SENSOR] Chaves geradas com sucesso! PubKey: %x\n", chavePublica)
+}
+
 func definirPrioridade(criticidade string) int {
 	switch criticidade {
 	case "alta":
@@ -25,46 +40,60 @@ func definirPrioridade(criticidade string) int {
 	}
 }
 
-// função para adicionar uma nova requisição à fila de prioridade
+func custoPorCriticidade(criticidade string) int {
+	switch criticidade {
+	case "alta":
+		return 3
+	case "media":
+		return 2
+	default:
+		return 1
+	}
+}
+
 func adicionarRequisicao(m Mensagem) {
+	valorCusto := custoPorCriticidade(m.Payload)
+
+	// String bruta que será assinada
+	mensagemBruta := fmt.Sprintf("%s:%d:%s", m.ID, valorCusto, m.Acao)
+	assinaturaBytes := ed25519.Sign(chavePrivada, []byte(mensagemBruta))
+
 	txPayload := PayloadTransacao{
-		Empresa:     m.ID,
-		Valor:       1,
-		Criticidade: m.Payload,
-		Acao:        m.Acao,
+		Empresa:      m.ID,
+		Valor:        valorCusto,
+		Criticidade:  m.Payload,
+		Acao:         m.Acao,
+		ChavePublica: hex.EncodeToString(chavePublica),
+		Assinatura:   hex.EncodeToString(assinaturaBytes),
 	}
 	txBytes, _ := json.Marshal(txPayload)
+
 	pacote := PacoteBase{Tipo: BlocoTransacao, Data: txBytes}
 	pacoteBytes, _ := json.Marshal(pacote)
 
 	txHex := fmt.Sprintf("0x%s", hex.EncodeToString(pacoteBytes))
 
-	// Busca o parceiro BFT via variável de ambiente (Docker DNS)
 	cometURL := os.Getenv("COMET_URL")
 	if cometURL == "" {
-		cometURL = "localhost:26657" // Fallback seguro
+		cometURL = "localhost:26657"
 	}
 
 	url := fmt.Sprintf("http://%s/broadcast_tx_commit?tx=%s", cometURL, txHex)
 
-	// Envia e confia no ABCI para colocar na fila depois
 	resp, err := http.Get(url)
 	if err != nil {
-		log.Printf("[SENSOR] ❌ Erro ao enviar para a Blockchain: %v\n", err)
+		log.Printf("[SENSOR] Erro ao enviar para a Blockchain: %v\n", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[SENSOR] 🚀 Pedido de %s enviado ao Consenso BFT!\n", m.ID)
+	log.Printf("[SENSOR] Pedido assinado de %s enviado ao Consenso BFT!\n", m.ID)
 }
 
-// função para lidar com conexões de sensores, ler as mensagens e adicionar as requisições à fila de prioridade
 func handleSensor(m Mensagem, conn net.Conn) {
-
-	adicionarRequisicao(m) // adiciona a requisição recebida à fila de prioridade
+	adicionarRequisicao(m)
 	reader := bufio.NewReader(conn)
 
-	// fica escutando o sensor para receber novas requisições
 	for {
 		linha, err := reader.ReadString('\n')
 		if err != nil {
@@ -79,6 +108,6 @@ func handleSensor(m Mensagem, conn net.Conn) {
 			continue
 		}
 
-		adicionarRequisicao(mensagem) // adiciona a nova requisição recebida à fila de prioridade
+		adicionarRequisicao(mensagem)
 	}
 }

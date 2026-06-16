@@ -5,54 +5,57 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
 	"time"
 )
 
-// O struct do drone representa cada drone conectado ao broker
 type Drone struct {
 	ID              string
 	Conn            net.Conn
 	Disponivel      bool
-	RequisicaoAtual string // Guarda a requisição atual do drone, se tiver
+	RequisicaoAtual string
 	UltimoHeartbeat time.Time
 }
 
-// submeterLaudoToBlockchain envia o laudo da missão para o consenso do CometBFT
-func submeterLaudoToBlockchain(droneID string) {
-	payload := PayloadLaudo{
-		DroneID: droneID,
-		Log:     "Missão concluída com sucesso",
+// submeterLiberacao envia um BlocoLiberacao ao consenso.
+// Roda I/O de rede em uma goroutine para NÃO travar o rwmu do broker.
+func submeterLiberacao(reqID, motivo string) {
+	payload := PayloadLiberacao{
+		RequisicaoID: reqID,
+		Motivo:       motivo,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
-	pacote := PacoteBase{
-		Tipo: BlocoLaudo,
-		Data: payloadBytes,
-	}
+	pacote := PacoteBase{Tipo: BlocoLiberacao, Data: payloadBytes}
 	pacoteBytes, _ := json.Marshal(pacote)
 
-	// Converte para Hexadecimal prefixado com 0x para o CometBFT
 	txHex := "0x" + hex.EncodeToString(pacoteBytes)
-	url := fmt.Sprintf("http://localhost:26657/broadcast_tx_commit?tx=%s", txHex)
 
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Printf("[BLOCKCHAIN] Erro ao submeter laudo via RPC: %v", err)
-		return
+	cometURL := os.Getenv("COMET_URL")
+	if cometURL == "" {
+		cometURL = "localhost:26657"
 	}
-	defer resp.Body.Close()
-	log.Printf("[BLOCKCHAIN] Laudo do drone %s enviado ao CometBFT para consenso!", droneID)
+
+	url := fmt.Sprintf("http://%s/broadcast_tx_commit?tx=%s", cometURL, txHex)
+
+	go func() {
+		resp, err := http.Get(url)
+		if err != nil {
+			fmt.Printf("[BROKER] Erro ao submeter liberação via consenso: %v\n", err)
+			return
+		}
+		defer resp.Body.Close()
+	}()
 }
 
-// função para lidar com mensagens recebidas de drones
 func handleDrone(m Mensagem, conn net.Conn) {
-
 	rwmu.Lock()
-	// Registra o novo drone no mapa de drones conectados
+
+	// O payload do registro agora pode trazer a requisição pendurada do drone reconectando
+	reqAnterior := m.Payload
+
 	novoDrone := &Drone{
 		ID:              m.ID,
 		Conn:            conn,
@@ -61,32 +64,32 @@ func handleDrone(m Mensagem, conn net.Conn) {
 		UltimoHeartbeat: time.Now(),
 	}
 	mapaDrones[m.ID] = novoDrone
-
 	fmt.Printf("[BROKER] Novo drone conectado: %s - TOTAL: %d\n", m.ID, len(mapaDrones))
-	despacharDrone()
 
+	// Trata o caso de reconexão: o drone diz que estava no meio de uma missão
+	if reqAnterior != "" {
+		if req, existe := mapaRequisicoes[reqAnterior]; existe && req.Status == "em atendimento" {
+			fmt.Printf("[REDE] 🔄 Drone %s reconectou com a missão %s pendurada! Solicitando liberação via consenso...\n", m.ID, reqAnterior)
+			submeterLiberacao(reqAnterior, "broker_caiu_drone_reconectou")
+		}
+	}
+
+	despacharDrone()
 	rwmu.Unlock()
 
 	reader := bufio.NewReader(conn)
-	// fica escutando o drone para receber mensagens de heartbeat, aceite e conclusão
 	for {
-
 		linha, err := reader.ReadString('\n')
 		if err != nil {
 			conn.Close()
-			log.Println("[SERVIDOR]: Erro ao escutar drone:", err)
 			return
 		}
 		mensagem, err := ParseMensagem(linha)
 		if err != nil {
-			log.Printf("Mensagem inválida recebida: %v", err)
-			return
+			continue
 		}
 
-		// Trata as ações específicas para mensagens de drones
 		switch mensagem.Acao {
-
-		// Atualiza o timestamp do último heartbeat recebido para monitorar a conexão do drone
 		case "HEARTBEAT":
 			rwmu.Lock()
 			if drone, existe := mapaDrones[mensagem.ID]; existe {
@@ -94,7 +97,6 @@ func handleDrone(m Mensagem, conn net.Conn) {
 			}
 			rwmu.Unlock()
 
-		// Quando o drone aceita uma missão, marca ele como indisponível e atualiza a requisição associada
 		case "ACEITE":
 			rwmu.Lock()
 			if drone, existe := mapaDrones[mensagem.ID]; existe {
@@ -106,26 +108,31 @@ func handleDrone(m Mensagem, conn net.Conn) {
 			}
 			rwmu.Unlock()
 
-		// Quando o drone conclui uma missão libera drone, atualiza requisição e gera laudo na blockchain
 		case "CONCLUSAO":
 			rwmu.Lock()
 			drone, existe := mapaDrones[m.ID]
 			if existe {
+				rotaDoDrone := mensagem.Payload
+				reqID := drone.RequisicaoAtual
+
+				logConclusao := fmt.Sprintf("Escolta %s finalizada", reqID)
+
 				drone.Disponivel = true
 				drone.RequisicaoAtual = ""
 
-				// 1. Monta o Laudo
 				laudoPayload := PayloadLaudo{
-					DroneID: drone.ID,
-					Log:     "Missão concluída com sucesso no Estreito de Ormuz",
+					RequisicaoID: reqID,
+					DroneID:      drone.ID,
+					Log:          logConclusao,
+					Rota:         rotaDoDrone,
+					Timestamp:    time.Now().Format(time.RFC3339),
 				}
+
 				laudoBytes, _ := json.Marshal(laudoPayload)
 				pacote := PacoteBase{Tipo: BlocoLaudo, Data: laudoBytes}
 				pacoteBytes, _ := json.Marshal(pacote)
-
 				txHex := fmt.Sprintf("0x%s", hex.EncodeToString(pacoteBytes))
 
-				// 2. Resolve o endereço de rede do Docker
 				cometURL := os.Getenv("COMET_URL")
 				if cometURL == "" {
 					cometURL = "localhost:26657"
@@ -133,44 +140,48 @@ func handleDrone(m Mensagem, conn net.Conn) {
 
 				url := fmt.Sprintf("http://%s/broadcast_tx_commit?tx=%s", cometURL, txHex)
 
-				// 3. Dispara a submissão em Goroutine para não prender o Mutex
 				go func() {
 					resp, err := http.Get(url)
-					if err != nil {
-						log.Printf("[BLOCKCHAIN] ❌ Erro ao submeter laudo via RPC: %v\n", err)
-						return
+					if err == nil {
+						defer resp.Body.Close()
 					}
-					defer resp.Body.Close()
 				}()
 			}
 			despacharDrone()
 			rwmu.Unlock()
 		}
-
 	}
 }
 
-// função para monitorar periodicamente os drones e detectar quedas
 func verificarHeartbeat() {
 	for {
 		time.Sleep(10 * time.Second)
 		rwmu.Lock()
 		for _, drone := range mapaDrones {
 			if time.Since(drone.UltimoHeartbeat) > 20*time.Second {
-				log.Printf("Drone %s desconectado por inatividade (timeout)", drone.ID)
 				drone.Conn.Close()
+				reqPendente := drone.RequisicaoAtual
 
-				if drone.RequisicaoAtual != "" {
-					reqID := drone.RequisicaoAtual
-					req := mapaRequisicoes[reqID]
-					if req != nil {
-						req.Status = "pendente"
-						req.DroneID = ""
-						filaRequisicoes.Push(req)
-						log.Printf("[BROKER] Requisição %s voltou para a fila devido à queda do drone", req.ID)
-					}
-				}
 				delete(mapaDrones, drone.ID)
+
+				if reqPendente != "" {
+					req := mapaRequisicoes[reqPendente]
+					if req != nil {
+						switch req.Status {
+						case "em atendimento":
+							// A mágica acontece aqui: não mexe mais na heap. Chama o consenso!
+							fmt.Printf("[HEARTBEAT] 🚨 Drone %s caiu durante a missão %s! Submetendo liberação...\n", drone.ID, reqPendente)
+							submeterLiberacao(reqPendente, "drone_caiu")
+						case "reservado":
+							// Se estava apenas "reservado" localmente (sem bloco confirmado),
+							// basta devolver para pendente localmente, pois nunca saiu da heap.
+							req.Status = "pendente"
+							req.DroneID = ""
+						}
+					}
+				} else {
+					fmt.Printf("[HEARTBEAT] Drone %s desconectado por inatividade.\n", drone.ID)
+				}
 			}
 		}
 		despacharDrone()

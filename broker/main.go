@@ -15,8 +15,7 @@ var rwmu sync.Mutex                                // mutex para proteger acesso
 var mapaDrones = make(map[string]*Drone)           // drones conectados e estado
 var mapaRequisicoes = make(map[string]*Requisicao) // mapa de requisições registradas
 var filaRequisicoes FilaRequisicoes                // heap de prioridade
-var brokerID string                                // hostname do broker atual
-var brokers []string                               // lista de endereços de outros brokers (para compatibilidade com despacho.go)
+var brokerID string // hostname do broker atual
 
 // função para lidar com conexões de sensores e drones
 func handleConnection(conn net.Conn) {
@@ -65,6 +64,10 @@ func main() {
 	// TAREFA 2: Instanciar a aplicação ABCI e o Ledger
 	meuLedger := NovoLedger()
 	app := NovaDronesApp(meuLedger)
+
+	// Sobe a API HTTP de transparência/auditoria (/saldos, /missoes, /auditoria, /extrato)
+	iniciarAPI(meuLedger)
+	log.Println("[API] Servidor de transparência ativo na porta 8080")
 
 	// Inicia o servidor ABCI na porta 26658 (Porta padrão que o CometBFT procura)
 	// server.NewSocketServer inicia o servidor e o método Start() roda em background
