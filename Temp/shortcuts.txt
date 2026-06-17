@@ -1,0 +1,11 @@
+### SUBIR REDE
+docker network create pbl-net
+
+### SUBIR BROKER
+docker run --name broker-app-1 --network pbl-net -p 1053:1053 -p 8080:8080 -e COMET_URL=node0:26657 SEU_USUARIO/broker-pbl3:v1
+
+### SUBIR NODE
+docker run --name node0 --user "$(id -u):$(id -g)" --network pbl-net -p 26657:26657 -p 26656:26656 -v ./minha-rede/node0:/cometbft cometbft/cometbft:v0.38.x node --proxy_app=tcp://broker-app-1:26658 --rpc.laddr=tcp://0.0.0.0:26657 --p2p.laddr=tcp://0.0.0.0:26656 --p2p.persistent_peers="05bae741b457ad946138ec071bc29a1eed8c3ddf@172.16.201.2:26656,dd6a278b150e6287027d6597ed424f0b371b301f@172.16.201.4:26656,04e4459859e8a0ed42327557eeb3d61613b048a4@172.16.201.1:26656,94e47f538fb70bcdbfcc27e33718eb3448aa721a@172.16.201.5:26656"
+
+### VERIFICAR ID DO PERSISTENT PEER
+docker run --rm --user "$(id -u):$(id -g)" -v ./minha-rede/node0:/cometbft cometbft/cometbft:v0.38.x show-node-id
