@@ -10,25 +10,25 @@ import (
 	"time"
 )
 
-// Função para obter o intervalo de envio de mensagens a partir da variável de ambiente, ou usar o padrão
+// obterIntervalo recupera o tempo de espera entre envios via variável de ambiente ou aplica o valor padrão.
 func obterIntervalo() int {
 	intervaloStr := os.Getenv("INTERVALO")
 	if intervaloStr == "" {
 		return 5
 	}
 
-	// Convertendo o valor da variável de ambiente para int
+	// Conversão do valor recuperado para tipo numérico inteiro.
 	intervalo, err := strconv.Atoi(intervaloStr)
 	if err != nil {
-		// Se a conversão falhar, retorna o valor padrão
-		log.Printf("Erro ao obter intervalo:, %s", err)
+		// Retorno do valor numérico padrão em caso de falha na conversão.
+		log.Printf("Erro na conversão do intervalo: %v", err)
 		return 5
 	}
 
 	return intervalo
 }
 
-// Função para obtrer o endereço do broker a partir da variável de ambiente, ou usar o padrão
+// obterBrokerAddr recupera o endereço do broker da variável de ambiente ou aplica o valor padrão.
 func obterBrokerAddr() string {
 	addr := os.Getenv("BROKER_ADDR")
 	if addr == "" {
@@ -38,7 +38,7 @@ func obterBrokerAddr() string {
 	return addr
 }
 
-// Função para tentar conectar a um broker
+// conectarBroker estabelece a conexão TCP com o endereço do broker configurado.
 func conectarBroker() (net.Conn, error) {
 	conn, err := net.Dial("tcp", obterBrokerAddr())
 	if err != nil {
@@ -53,7 +53,7 @@ func main() {
 		log.Fatalf("Erro ao obter o hostname: %v", err)
 	}
 
-	// Tentativa de conexão com o broker
+	// Inicialização da conexão primária com o broker.
 	conn, err := conectarBroker()
 	if err != nil {
 		log.Fatalf("Erro inicial ao conectar ao servidor: %v", err)
@@ -61,7 +61,7 @@ func main() {
 	defer conn.Close()
 
 	for {
-		// Tipos de sensores e criticidades
+		// Definição dos domínios de tipos de evento e níveis de criticidade.
 		tipos := []string{
 			"deriva",
 			"bloqueio_rota",
@@ -83,9 +83,9 @@ func main() {
 
 		_, err := conn.Write([]byte(mensagem))
 		if err != nil {
-			log.Printf("Erro ao enviar mensagem: %v. Tentando reconectar...", err)
-			// Tenta reconectar
-			// Fecha a conexão antiga para evitar vazamento de recursos
+			log.Printf("Erro de transmissão: %v. Iniciando rotina de reconexão.", err)
+			
+			// Encerramento da conexão defeituosa para liberação de recursos do sistema.
 			if conn != nil {
 				conn.Close()
 			}
@@ -93,16 +93,16 @@ func main() {
 			for {
 				conn, err = conectarBroker()
 				if err == nil {
-					log.Println("Reconectado com sucesso ao servidor.")
-					break // Conseguiu conectar. Sai do laço de reconexão.
+					log.Println("Reconexão estabelecida com sucesso.")
+					break 
 				}
 
-				log.Printf("Erro ao reconectar: %v. Tentando novamente em breve...", err)
-				time.Sleep(5 * time.Second) // Espera antes de tentar novamente
+				log.Printf("Falha na reconexão: %v. Nova tentativa em breve.", err)
+				time.Sleep(5 * time.Second) 
 			}
 		}
 
-		// Interface terminal do sensor
+		// Atualização da interface de terminal e registro em log da operação atual.
 		fmt.Printf("\r\033[2k\r[SENSOR %s] Criticidade: %s | Horário: %s", dado, criticidade, time.Now().UTC().Format("2006-01-02 15:04:05"))
 		log.Printf("[SENSOR %s] Enviando dado de criticidade: %s", dado, criticidade)
 		time.Sleep(time.Duration(obterIntervalo()) * time.Second)
