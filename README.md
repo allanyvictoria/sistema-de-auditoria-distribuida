@@ -1,415 +1,159 @@
-# Estreito de Ormuz — Infraestrutura Distribuída de Drones
+# Escolta Marítima Autônoma — Infraestrutura Blockchain com Drones
 
-Sistema distribuído para coordenação de uma frota de drones autônomos de monitoramento marítimo, desenvolvido em Go e containerizado com Docker. Brokers independentes gerenciam setores do estreito, compartilham uma frota de drones e continuam operando mesmo com falhas parciais, sem nenhum ponto central de controle.
+Sistema distribuído e imutável para coordenação de missões de escolta e monitoramento marítimo via drones autônomos. A aplicação utiliza **CometBFT** como motor de consenso (Byzantine Fault Tolerance) e a interface **ABCI** escrita em Go para gerenciar um *Ledger* criptográfico, validar assinaturas digitais (ED25519) e assegurar a transparência de créditos e laudos de missões.
 
 ---
 
 ## Estrutura de Diretórios
 
-```
+```text
 .
-├── docker-compose.yml
-├── Teste.go                        # Suite de testes TCP externos
 ├── broker/
-│   ├── Dockerfile
-│   ├── main.go                     # Inicialização do servidor TCP, goroutines de heartbeat e aging
-│   ├── broker.go                   # Protocolo inter-broker: RESERVAR_E_DESPACHAR, CONCLUSAO_REMOTA
-│   ├── despacho.go                 # Lógica de despacho local e remoto, heap de prioridade
-│   ├── drone.go                    # Registro de drones, heartbeat, verificação de timeout
-│   ├── sensor.go                   # Recepção de requisições dos sensores, inserção na fila
-│   ├── requisicao.go               # Struct Requisicao, FilaRequisicoes (heap), aging de prioridade
-│   ├── protocolo.go                # Struct Mensagem, ParseMensagem
-│   └── go.mod
+│   ├── main.go               # Servidores TCP de clientes, Servidor ABCI e API HTTP
+│   ├── abci.go               # App ABCI (CheckTx, FinalizeBlock) e validação criptográfica
+│   ├── api.go                # Endpoints de transparência (/saldos, /extrato, /auditoria)
+│   ├── despacho.go           # Submissão de blocos de DESPACHO via API do CometBFT
+│   ├── drone.go              # Handler TCP dos drones, envio de LIBERACAO e LAUDO
+│   ├── ledger.go             # Histórico imutável de créditos e sistema de cache de saldo
+│   ├── protocolo.go          # Struct Mensagem e parser de strings do TCP
+│   ├── requisicao.go         # Heap de prioridade, aging, struct Requisicao
+│   └── sensor.go             # Handler de conexões dos sensores (navios)
 ├── drone/
-│   ├── Dockerfile
-│   ├── main.go                     # Conecta ao broker, envia heartbeat, executa missões
-│   └── go.mod
-├── sensor/
-│   ├── Dockerfile
-│   ├── main.go                     # Gera requisições aleatórias autonomamente
-│   └── go.mod
-└── sensor-manual/
-    ├── Dockerfile
-    ├── main.go                     # Interface de terminal para injetar requisições manualmente
-    └── go.mod
+│   └── main.go               # Simulação de drone, edge computing (GPS) e heartbeat
+└── sensor/
+    └── main.go               # Terminal do navio, geração de chaves ED25519 e assinaturas
 ```
 
 ---
 
 ## Pacotes e Dependências
 
-O projeto utiliza **apenas a biblioteca padrão do Go**, sem frameworks externos:
+A aplicação de estado (Broker/ABCI) expande a biblioteca padrão do Go incorporando pacotes de consenso e criptografia:
 
 | Pacote | Uso |
 |--------|-----|
-| `net` | Sockets TCP (brokers, drones, sensores) |
-| `sync` | `Mutex` para proteção de mapas e fila compartilhados |
-| `container/heap` | Fila de prioridade das requisições |
-| `bufio` | Leitura de mensagens linha a linha via TCP |
-| `time` | Timestamps, heartbeat, aging, timeout de conexão |
-| `fmt` / `log` | Saída e logging |
-| `math/rand` | Geração aleatória de tipos e criticidades no sensor |
-| `strings` | Parsing de mensagens e variáveis de ambiente |
-| `strconv` | Conversão do intervalo de envio do sensor |
-| `os` | Hostname (ID do container), variáveis de ambiente |
+| `net` / `http` | Sockets TCP e chamadas REST à RPC do CometBFT |
+| `github.com/cometbft/...` | Interface ABCI (`abcitypes`) e servidor de sockets do Comet |
+| `crypto/ed25519` | Geração de chaves e verificação de assinaturas em transações |
+| `sync` | Mutex (`RWMutex`) para sincronização local (filas e mapas) |
+| `container/heap` | Fila de prioridade de missões por criticidade |
+| `encoding/json` / `hex` | Serialização de transações para o mempool |
+| `math/rand/v2` | Geração de coordenadas aleatórias em edge (Drone) |
 
 ---
 
 ## Protocolo de Comunicação
 
-Todas as mensagens seguem o formato:
+O sistema opera em duas camadas de protocolo. A camada **TCP Interna** (Broker ↔ Clientes) e a **Camada de Consenso** (Broker ↔ CometBFT).
 
-```
-TIPO;ID;ACAO;PAYLOAD\n
-```
+### 1. Mensagens TCP (Clientes)
+Formato base: `TIPO;ID;ACAO;PAYLOAD\n`
 
-| Campo | Descrição |
-|-------|-----------|
-| `TIPO` | Origem da mensagem: `SENSOR`, `DRONE`, `BROKER` |
-| `ID` | Identificador do remetente (hostname do container) |
-| `ACAO` | Ação ou estado: `REGISTRO`, `MISSAO`, `HEARTBEAT`, `RESERVAR_E_DESPACHAR`, etc. |
-| `PAYLOAD` | Dado adicional (criticidade, droneID, reqID, etc.) |
+* **Sensor → Broker:** `SENSOR;Navio_A;bloqueio_rota;alta`
+* **Drone → Broker:** `DRONE;drone-1;ACEITE;`
+* **Broker → Drone:** `BROKER;broker-1;MISSAO;Navio_A-171543200`
 
-### Mensagens por componente
+### 2. Blocos de Consenso (JSON via RPC CometBFT)
+As transações trafegam empacotadas na struct `PacoteBase`. Tipos mapeados no `abci.go`:
 
-**Sensor → Broker** (requisição de monitoramento):
-```
-SENSOR;sensor-setor1-deriva;bloqueio_rota;alta
-```
-
-**Drone → Broker** (registro ao conectar):
-```
-DRONE;drone-setor1;REGISTRO;
-```
-
-**Drone → Broker** (heartbeat periódico, a cada 10s):
-```
-DRONE;drone-setor1;HEARTBEAT;
-```
-
-**Drone → Broker** (aceite e conclusão de missão):
-```
-DRONE;drone-setor1;ACEITE;
-DRONE;drone-setor1;CONCLUSAO;
-```
-
-**Broker → Drone** (despacho de missão):
-```
-BROKER;broker1;MISSAO;bloqueio_rota
-```
-
-**Broker → Broker** (reserva e despacho atômico de drone remoto):
-```
-BROKER;broker1;RESERVAR_E_DESPACHAR;req-xyz/bloqueio_rota/broker1
-→ BROKER;broker2;DESPACHO_OK;
-→ BROKER;broker2;DESPACHO_NEGADO;
-```
-
-**Broker → Broker** (notificação de conclusão de missão remota):
-```
-BROKER;broker2;CONCLUSAO_REMOTA;req-xyz
-```
+* **`REGISTRO`**: Cadastra chaves públicas e inicializa saldo (Gênese).
+* **`TRANSACAO`**: Solicitação de missão assinada, debita créditos da empresa.
+* **`TRANSFERENCIA`**: Envio de fundos P2P assinado pela chave da empresa origem.
+* **`LAUDO`**: Finalização de missão gerada e assinada pelas chaves do Drone.
+* **`DESPACHO` / `LIBERACAO`**: Controle interno distribuído de disponibilidade de frota.
 
 ---
 
 ## Como Executar
 
-### Pré-requisitos
+Utilize as diretrizes abaixo para configurar a rede Docker interna e iniciar a malha do consenso e os Brokers.
 
-- [Docker](https://www.docker.com/)
-- [Docker Compose](https://docs.docker.com/compose/)
-- [Go 1.22+](https://golang.org/) — apenas para rodar os testes externos (`Teste.go`)
-
-### Opção A — Tudo em uma máquina (docker-compose)
-
-Constrói as imagens e sobe brokers, drones e sensores automaticamente:
-
+### 1. Criar a Rede Docker
+O ecossistema depende de uma rede estática fechada para o P2P da blockchain:
 ```bash
-docker compose up --build
+docker network create pbl-net
 ```
 
-Para derrubar o ambiente:
-
+### 2. Subir o Nó do CometBFT (Blockchain)
+Inicia o nó da blockchain conectado à interface ABCI do broker, com mapeamento de peers para P2P em laboratório:
 ```bash
-docker compose down -v
+docker run --name node0 --user "$(id -u):$(id -g)" --network pbl-net \
+  -p 26657:26657 -p 26656:26656 -v ./minha-rede/node0:/cometbft \
+  cometbft/cometbft:v0.38.x node \
+  --proxy_app=tcp://broker-app-1:26658 \
+  --rpc.laddr=tcp://0.0.0.0:26657 \
+  --p2p.laddr=tcp://0.0.0.0:26656 \
+  --p2p.persistent_peers="05bae741b457ad946138ec071bc29a1eed8c3ddf@172.16.201.2:26656,dd6a278b150e6287027d6597ed424f0b371b301f@172.16.201.4:26656,04e4459859e8a0ed42327557eeb3d61613b048a4@172.16.201.1:26656,94e47f538fb70bcdbfcc27e33718eb3448aa721a@172.16.201.5:26656"
 ```
 
-### Opção B — Máquinas distintas no laboratório
-
-Cada serviço pode rodar em uma máquina diferente. Substitua os IPs pelos endereços reais da rede do lab:
-
-**Máquina 1 — broker1 (ex: 172.16.201.8)**
+### 3. Subir o Broker (App ABCI + Servidor TCP)
+Substitua `SEU_USUARIO` pela sua imagem no Docker Hub:
 ```bash
-# Broker
-docker run -d --name broker1 \
-  -e BROKERS_ADDR=172.16.201.4,172.16.201.7 \
-  -p 1053:1053 \
-  allanyvictoria/broker-setor:v1
-
-# Drone do setor 1
-docker run -d --name drone-setor1 \
-  -e BROKER_ADDR=172.16.201.8:1053 \
-  -e BROKERS_ADDR=172.16.201.4,172.16.201.7 \
-  allanyvictoria/drone:v1
-
-# Sensores do setor 1
-docker run -d --name sensor-setor1-deriva \
-  -e BROKER_ADDR=172.16.201.8:1053 \
-  -e INTERVALO=5 \
-  allanyvictoria/sensor-setor:v1
-
-docker run -d --name sensor-setor1-bloqueio \
-  -e BROKER_ADDR=172.16.201.8:1053 \
-  -e INTERVALO=5 \
-  allanyvictoria/sensor-setor:v1
+docker run --name broker-app-1 --network pbl-net \
+  -p 1053:1053 -p 8080:8080 \
+  -e COMET_URL=node0:26657 \
+  SEU_USUARIO/broker-pbl3:v1
 ```
 
-**Máquina 2 — broker2 (ex: 172.16.201.4)**
+### 4. Verificar ID do Persistent Peer (Auditoria de Nó)
+Se necessário para inclusão na rede estendida:
 ```bash
-docker run -d --name broker2 \
-  -e BROKERS_ADDR=172.16.201.8,172.16.201.7 \
-  -p 1053:1053 \
-  allanyvictoria/broker-setor:v1
-
-docker run -d --name drone-setor2 \
-  -e BROKER_ADDR=172.16.201.4:1053 \
-  -e BROKERS_ADDR=172.16.201.8,172.16.201.7 \
-  allanyvictoria/drone:v1
-
-docker run -d --name sensor-setor2-objeto \
-  -e BROKER_ADDR=172.16.201.4:1053 \
-  -e INTERVALO=5 \
-  allanyvictoria/sensor-setor:v1
-
-docker run -d --name sensor-setor2-congestionamento \
-  -e BROKER_ADDR=172.16.201.4:1053 \
-  -e INTERVALO=5 \
-  allanyvictoria/sensor-setor:v1
-```
-
-**Máquina 3 — broker3 (ex: 172.16.201.7)**
-```bash
-docker run -d --name broker3 \
-  -e BROKERS_ADDR=172.16.201.8,172.16.201.4 \
-  -p 1053:1053 \
-  allanyvictoria/broker-setor:v1
-
-docker run -d --name drone-setor3 \
-  -e BROKER_ADDR=172.16.201.7:1053 \
-  -e BROKERS_ADDR=172.16.201.8,172.16.201.4 \
-  allanyvictoria/drone:v1
-
-docker run -d --name sensor-setor3-inspecao \
-  -e BROKER_ADDR=172.16.201.7:1053 \
-  -e INTERVALO=5 \
-  allanyvictoria/sensor-setor:v1
-
-docker run -d --name sensor-setor3-risco \
-  -e BROKER_ADDR=172.16.201.7:1053 \
-  -e INTERVALO=5 \
-  allanyvictoria/sensor-setor:v1
-```
-
-### Sensor manual
-
-Para injetar requisições manualmente, informando setor, tipo e criticidade:
-
-```bash
-# No docker-compose
-docker compose --profile manual run --rm sensor-manual
-
-# Em máquinas distintas (passa os IPs dos brokers como argumento)
-docker run -it --rm allanyvictoria/sensor-manual:v1 \
-  -ip 172.16.201.8,172.16.201.4,172.16.201.7
-```
-
-### Comandos úteis
-
-```bash
-# Ver logs em tempo real
-docker logs -f broker1
-
-# Parar um broker para testar tolerância a falha
-docker stop broker2
-
-# Parar um drone para testar replanejamento
-docker stop drone-setor1
-
-# Ver todos os containers rodando
-docker ps
-
-# Parar e remover todos os containers
-docker stop $(docker ps -q)
-docker rm $(docker ps -aq)
+docker run --rm --user "$(id -u):$(id -g)" -v ./minha-rede/node0:/cometbft \
+  cometbft/cometbft:v0.38.x show-node-id
 ```
 
 ---
 
 ## Como Usar
 
-### Sensor automático
+### API de Transparência (Porta 8080)
+O Broker provê rotas HTTP para auditoria dos dados aprovados em consenso:
+* `GET /saldos` — Snapshot do cache de saldos antigos/atuais de todos os navios.
+* `GET /extrato` — Exporta o `Ledger` completo (todo o histórico de débitos e transferências).
+* `GET /saldos/recalcular` — Rederiva todos os saldos somando o Ledger do zero, provando a consistência dos fundos.
+* `GET /auditoria` — Proxy direto para acesso granular ao último bloco consolidado pelo CometBFT.
 
-Cada sensor gera requisições aleatórias a cada `INTERVALO` segundos (padrão: 5s). O tipo de ocorrência e a criticidade são sorteados a cada envio:
+### Terminal do Sensor (Navio)
+O terminal interativo roda no terminal local. Ele emite um par de chaves ED25519 randômico temporário por sessão:
+```text
+Chave criptográfica gerada para esta sessão.
+Digite o nome da sua Companhia (ex: Navio_A): Navio_A
 
-```
-[SENSOR bloqueio_rota] Criticidade: alta | Horário: 2026-05-09 14:32:11
-```
-
-### Sensor manual
-
-Ao iniciar, exibe um menu interativo:
-
-```
-=== SETOR ===
-  [1] Setor 1 (broker1)
-  [2] Setor 2 (broker2)
-  [3] Setor 3 (broker3)
-
-=== TIPO DE SENSOR ===
-  [1] bloqueio_rota
-  [2] deriva
-  ...
-
-=== CRITICIDADE ===
-  [1] baixa
-  [2] media
-  [3] alta
+--- TERMINAL DO SENSOR: Navio_A ---
+1. Emitir Créditos Iniciais
+2. Solicitar Missão
+3. Transferir Créditos para outra Empresa
+4. Sair
 ```
 
-### Drone
+Ao solicitar missão, a aplicação assina o pedido matematicamente e submete o bloco `TRANSACAO` ao ABCI. Se aprovada pelo `CheckTx` (saldo verificado e assinatura válida), entra no mempool.
 
-O drone conecta ao broker do seu setor, registra-se e aguarda missões. Ao receber `MISSAO`, confirma com `ACEITE`, simula a execução (5s) e responde com `CONCLUSAO`:
-
-```
-[DRONE drone-setor1] Conectado ao broker (broker1:1053) com sucesso!
-[DRONE drone-setor1] Mensagem recebida: BROKER;broker1;MISSAO;bloqueio_rota
-[DRONE drone-setor1] Iniciando missão!
-[DRONE drone-setor1] Missão concluída!
-```
-
-Se o broker cair, o drone tenta reconectar automaticamente nos brokers alternativos definidos em `BROKERS_ADDR` a cada 5s.
-
-### Broker
-
-Exibe no terminal as requisições recebidas, o estado da fila e os despachos:
-
-```
-[BROKER broker1]: Servidor iniciado na porta 1053
-[BROKER] Nova requisição recebida: bloqueio_rota criticidade alta
-[FILA] ENTROU: Req sensor-setor1-1234 | Tipo: bloqueio_rota | Prioridade: 3 | Tamanho atual: 1
-[BROKER] Drone drone-setor1 despachado remotamente com sucesso!
-[BROKER-1] Sucesso! Drone despachado. 0 requisições restantes na fila.
-```
+### Drones
+Os drones rodam autonomamente. Ao conectar e entrar na rede do broker, emitem laudos contendo criptografia validada atestando a conclusão da escolta de forma inalterável no Ledger.
 
 ---
 
-## Arquitetura
+## Arquitetura & Fluxo BFT
 
-```
-        SETOR 1                  SETOR 2                  SETOR 3
-  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-  │  sensor-deriva   │    │  sensor-objeto   │    │ sensor-inspecao  │
-  │  sensor-bloqueio │    │  sensor-congest. │    │ sensor-risco     │
-  └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
-           │ TCP                   │ TCP                    │ TCP
-           ▼                       ▼                        ▼
-  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-  │    broker1      │◀──▶│    broker2      │◀──▶│    broker3      │
-  │  porta 1053     │    │  porta 1053     │    │  porta 1053     │
-  └────────▲────────┘    └────────▲────────┘    └────────▲────────┘
-           │ TCP                   │ TCP                    │ TCP
-  ┌────────┴────────┐    ┌────────┴────────┐    ┌────────┴────────┐
-  │  drone-setor1   │    │  drone-setor2   │    │  drone-setor3   │
-  └─────────────────┘    └─────────────────┘    └─────────────────┘
-
-  Frota compartilhada: qualquer broker pode requisitar drone de outro setor
+```text
+  [Navio_A (Sensor)] ──────── (1) Assina Tx (ED25519) ───────┐
+                                                             ▼
+                                                ┌────────────────────────┐
+  [API HTTP:8080] ◀── (4) Deriva Ledger ────────┤        Broker          │
+    (Saldos/Extrato)                            │ (ABCI App + TCP 1053)  │
+                                                └────┬───────────────▲───┘
+                                                     │               │
+                                              (2) Proxy App       (3) FinalizeBlock
+                                                 CheckTx             │
+                                                     ▼               │
+                                                ┌────────────────────────┐
+  [Drone Edge GPS] ── (5) Assina Laudo ────────▶│  Nó CometBFT (26657)   │
+                                                │  (Consenso P2P, Rede)  │
+                                                └────────────────────────┘
 ```
 
-Cada broker gerencia seu setor de forma autônoma. Quando não há drone local disponível, o broker consulta os demais via operação atômica `RESERVAR_E_DESPACHAR` — reserva e despacho ocorrem dentro de um único lock no broker remoto, eliminando race conditions. A conclusão de missões remotas é notificada de volta ao broker de origem via `CONCLUSAO_REMOTA`.
-
----
-
-## Fila de Prioridade e Aging
-
-As requisições entram numa `container/heap` ordenada por prioridade e, dentro da mesma prioridade, por timestamp (FIFO):
-
-| Criticidade | Prioridade |
-|-------------|------------|
-| `alta` | 3 |
-| `media` | 2 |
-| `baixa` | 1 |
-
-O **aging** evita que requisições de baixa prioridade fiquem esperando indefinidamente. A cada 10s, requisições pendentes há mais de 30s têm a prioridade elevada em um nível. Quando há alteração, a heap é reorganizada e o broker tenta despachar novamente.
-
----
-
-## Concorrência e Tolerância a Falhas
-
-- `sync.RWMutex` protege `mapaDrones`, `mapaRequisicoes` e `filaRequisicoes` contra acesso concorrente
-- Cada conexão TCP (sensor, drone, broker remoto) roda em goroutine dedicada
-- O lock é liberado antes de chamadas de rede inter-broker e readquirido logo após, evitando bloqueio do sistema durante consultas remotas
-- **Operação atômica:** `RESERVAR_E_DESPACHAR` executa reserva e despacho dentro de um único lock no broker remoto, eliminando a janela de race condition entre reservar e despachar
-- **Heartbeat:** o drone envia `HEARTBEAT` a cada 10s; o broker verifica a cada 10s e remove drones sem sinal há mais de 20s
-- **Requeue:** se um drone cai durante uma missão, a requisição volta à fila com status `pendente` e é redespachada automaticamente
-- **Sem SPOF:** se um broker cair, os demais continuam operando independentemente; drones tentam reconectar nos brokers alternativos listados em `BROKERS_ADDR`; sensores reconectam ao próprio broker até ele voltar
-
----
-
-## Testes
-
-O arquivo `Teste.go` permite testar o sistema externamente via TCP, simulando cenários reais de uso e falhas, sem necessidade de acessar os containers manualmente.
-
-> **Pré-requisito para todos os testes:** Go 1.22+ instalado na máquina onde o teste é executado.
->
-> **Pré-requisito adicional para testes de falha** (`drone_cai`, `migracao`, `missao_remota`): Docker CLI instalado e socket acessível. Execute esses testes na mesma máquina que roda os containers envolvidos.
-
-### TESTE 1 — Disponibilidade
-
-Verifica conectividade TCP em cada broker. Útil para confirmar que todos estão no ar antes dos outros testes.
-
-```bash
-go run Teste.go disponivel 172.16.201.8:1053 172.16.201.4:1053 172.16.201.7:1053
-```
-
-### TESTE 2 — Concorrência
-
-N workers conectam e disparam requisições simultaneamente, testando a fila de prioridade sob carga.
-
-```bash
-go run Teste.go concorrencia 172.16.201.8:1053 20
-```
-
-### TESTE 3 — Despacho Atômico (inter-broker)
-
-Testa o protocolo `RESERVAR_E_DESPACHAR` diretamente entre brokers, verificando que a operação atômica funciona sem race condition.
-
-```bash
-go run Teste.go despacho 172.16.201.4:1053 broker1 3
-```
-
-### TESTE 4 — Drone cai durante missão
-
-Envia uma requisição via sensor, aguarda o despacho, mata o container do drone no meio da missão e verifica se o heartbeat detecta a queda e a requisição volta à fila.
-
-```bash
-# Execute na máquina que roda broker1 e drone-setor1
-go run Teste.go drone_cai 172.16.201.8:1053 broker1 drone-setor1
-```
-
-### TESTE 5 — Migração de drone
-
-Derruba o broker do setor e verifica se o drone migra para um broker alternativo e continua atendendo missões.
-
-```bash
-# Execute na máquina que roda broker1 e drone-setor1
-go run Teste.go migracao 172.16.201.8:1053 172.16.201.4:1053 172.16.201.7:1053 broker1 drone-setor1
-```
-
-### TESTE 6 — Missão remota
-
-Para o drone local de um setor e verifica se o broker busca drone em outro setor automaticamente.
-
-```bash
-# Execute na máquina que roda broker1 e drone-setor1
-go run Teste.go missao_remota broker1 drone-setor1 172.16.201.4:1053
+1. **Assinatura:** O Sensor/Navio gera uma transação, anexa o timestamp e assina com a chave privada.
+2. **CheckTx:** A interface ABCI atua como porteira do mempool. Verifica saldos na memória, valida a `PublicKey` no dicionário da rede e confere o *hash* da assinatura matemática.
+3. **Consenso & FinalizeBlock:** O CometBFT sincroniza com os peers. Ao gerar o bloco, o `FinalizeBlock` aplica o débito no `Ledger`, insere na fila e aciona despachos.
+4. **Resiliência de Rede:** Submissões assíncronas do Broker de liberação de drones contam com tolerância a *rollbacks* na fila local (via goroutines) se o endpoint HTTP do CometBFT demorar a responder.
 ```
