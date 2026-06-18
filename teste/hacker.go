@@ -28,30 +28,30 @@ type PayloadTransferencia struct {
 	Assinatura   string `json:"assinatura"`
 }
 
+// main executa a simulação de fraude financeira na rede.
 func main() {
-	fmt.Println("INICIANDO SCRIPT HACKER")
+	fmt.Println("INICIANDO SCRIPT DE TESTE DE VULNERABILIDADE")
 
-	// 1. O Hacker gera as próprias chaves (não são as chaves da vítima)
+	// Geração de par de chaves próprio, distinto das chaves da vítima.
 	chavePublicaHacker, chavePrivadaHacker, _ := ed25519.GenerateKey(cryptorand.Reader)
 
-	// 2. Alvos do ataque
-	vitima := "Navio_B" // Alguém que já tem saldo na rede
+	vitima := "Navio_B"
 	hacker := "Pirata_1"
 	valorRoubado := 50
 
-	fmt.Printf("Alvo: %s | Tentando roubar: %d créditos\n", vitima, valorRoubado)
+	fmt.Printf("Alvo: %s | Tentativa de transferência: %d créditos\n", vitima, valorRoubado)
 
-	// 3. O hacker forja a mensagem fingindo que a Vítima autorizou a transferência
+	// Montagem do payload forjando a autorização da vítima.
 	mensagemBruta := fmt.Sprintf("%s:%s:%d", vitima, hacker, valorRoubado)
 
-	// Mas ele assina com a PRÓPRIA chave privada (porque ele não tem a da vítima)
+	// Assinatura do payload utilizando a chave privada não correspondente à origem.
 	assinaturaForjada := ed25519.Sign(chavePrivadaHacker, []byte(mensagemBruta))
 
 	txPayload := PayloadTransferencia{
-		Origem:       vitima, // Mentindo a origem
+		Origem:       vitima,
 		Destino:      hacker,
 		Valor:        valorRoubado,
-		ChavePublica: hex.EncodeToString(chavePublicaHacker), // Mandando a chave falsa
+		ChavePublica: hex.EncodeToString(chavePublicaHacker),
 		Assinatura:   hex.EncodeToString(assinaturaForjada),
 	}
 
@@ -59,11 +59,10 @@ func main() {
 	pacoteBytes, _ := json.Marshal(PacoteBase{Tipo: BlocoTransferencia, Data: txBytes})
 	txHex := fmt.Sprintf("0x%s", hex.EncodeToString(pacoteBytes))
 
-	// Disparando contra a rede (Coloque o IP de qualquer nó do lab aqui)
 	ipDoNo := "172.16.201.1:26657"
 	url := fmt.Sprintf("http://%s/broadcast_tx_commit?tx=%s", ipDoNo, txHex)
 
-	fmt.Println("Enviando transação fraudulenta para a blockchain...")
+	fmt.Println("Submetendo transação fraudulenta à blockchain...")
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Erro de conexão: %v\n", err)
@@ -73,11 +72,11 @@ func main() {
 
 	body, _ := io.ReadAll(resp.Body)
 
-	// Avaliando o resultado
+	// Avaliação do retorno do mempool sobre a validação da transação.
 	if strings.Contains(string(body), `"code":0`) {
-		fmt.Println("SUCESSO: A blockchain (Broker) rejeitou a fraude!")
-		fmt.Printf("Motivo da rejeição: %s\n", string(body))
+		fmt.Println("FALHA DE SEGURANÇA: A blockchain processou a transação fraudulenta (código 0).")
 	} else {
-		fmt.Println("FALHA DE SEGURANÇA: A rede aceitou a transação falsa!")
+		fmt.Println("SUCESSO: A rede identificou a divergência criptográfica e rejeitou a transação.")
+		fmt.Printf("Motivo da rejeição: %s\n", string(body))
 	}
 }
