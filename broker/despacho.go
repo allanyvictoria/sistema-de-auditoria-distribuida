@@ -10,10 +10,8 @@ import (
 	"time"
 )
 
-// submeterDespacho envia ao CometBFT um BlocoDespacho anunciando que
-// `reqID` foi atribuída ao `droneID` deste broker. Roda em goroutine
-// própria pois faz I/O de rede e NÃO deve ser chamada com rwmu travado.
-// Retorna 'true' se o CometBFT aceitou, e 'false' se deu erro de conexão.
+// submeterDespacho envia um BlocoDespacho ao CometBFT atribuindo reqID ao droneID.
+// Executada em goroutine separada para evitar bloqueios de I/O na thread principal.
 func submeterDespacho(reqID, droneID string) bool {
 	payload := PayloadDespacho{
 		RequisicaoID: reqID,
@@ -27,8 +25,6 @@ func submeterDespacho(reqID, droneID string) bool {
 
 	txHex := "0x" + hex.EncodeToString(pacoteBytes)
 
-	// A rede Docker usa os nomes dos serviços (node0, node1, node2, node3)
-	// Isso garante que o tráfego não passe pelo host do Windows
 	cometURL := os.Getenv("COMET_URL")
 	if cometURL == "" {
 		fmt.Println("[BROKER] ERRO CRÍTICO: COMET_URL não configurada no ambiente!")
@@ -39,8 +35,7 @@ func submeterDespacho(reqID, droneID string) bool {
 
 	resp, err := http.Get(url)
 	if err != nil {
-		// Não printa mais o erro feio do Go, apenas avisa que a rede tá caindo
-		fmt.Printf("[BROKER] Atraso na rede CometBFT (%s). Aplicando Rollback...\n", cometURL)
+		fmt.Printf("[BROKER] Falha de comunicação com a rede CometBFT (%s). Aplicando Rollback...\n", cometURL)
 		return false
 	}
 	defer resp.Body.Close()
@@ -48,9 +43,8 @@ func submeterDespacho(reqID, droneID string) bool {
 	return true
 }
 
-// despacharDrone percorre a fila de requisições pendentes e, para cada uma
-// que pode ser atendida por um drone LOCAL disponível, submete um
-// BlocoDespacho ao consenso anunciando essa atribuição.
+// despacharDrone verifica a fila de requisições e atribui drones disponíveis
+// aos pedidos pendentes. Submete o despacho ao consenso em background.
 func despacharDrone() bool {
 	type par struct {
 		reqID   string
@@ -68,13 +62,13 @@ func despacharDrone() bool {
 				continue
 			}
 
-			// Reserva otimista local (trava o drone temporariamente)
+			// Reserva do drone e atualização de status locais
 			drone.Disponivel = false
 			drone.RequisicaoAtual = req.ID
 			req.Status = "reservado"
 
 			paraSubmeter = append(paraSubmeter, par{reqID: req.ID, droneID: drone.ID})
-			break // passa para a próxima requisição pendente da fila
+			break
 		}
 	}
 
@@ -82,14 +76,9 @@ func despacharDrone() bool {
 		return false
 	}
 
-	// O SEGREDO ESTÁ AQUI: Iniciamos uma Goroutine!
-	// O I/O de rede vai rodar em paralelo. Assim, a função despacharDrone()
-	// retorna imediatamente, o FinalizeBlock termina, e o CometBFT é
-	// descongelado a tempo de receber o HTTP que vamos mandar abaixo!
 	go func(missoes []par) {
 		var falhas []par
 		for _, p := range missoes {
-			// JITTER: Atraso aleatório para evitar colisão dos brokers
 			time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
 
 			sucesso := submeterDespacho(p.reqID, p.droneID)
@@ -98,7 +87,7 @@ func despacharDrone() bool {
 			}
 		}
 
-		// Se a rede caiu, pegamos o cadeado de volta em background e desfazemos a reserva
+		// Reversão de estado em caso de falha na rede
 		if len(falhas) > 0 {
 			rwmu.Lock()
 			for _, f := range falhas {
@@ -109,7 +98,7 @@ func despacharDrone() bool {
 					drone.Disponivel = true
 					drone.RequisicaoAtual = ""
 				}
-				fmt.Printf("[FILA] 🔄 ROLLBACK: Rede falhou. Req %s devolvida e Drone %s liberado!\n", f.reqID, f.droneID)
+				fmt.Printf("[FILA] ROLLBACK: Rede falhou. Req %s devolvida e Drone %s liberado!\n", f.reqID, f.droneID)
 			}
 			rwmu.Unlock()
 		}
