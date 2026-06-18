@@ -27,6 +27,7 @@ func init() {
 	log.Printf("[SENSOR] Chaves geradas com sucesso! PubKey: %x\n", chavePublica)
 }
 
+// definirPrioridade relaciona o nome da criticidade com um valor numérico de prioridade.
 func definirPrioridade(criticidade string) int {
 	switch criticidade {
 	case "alta":
@@ -40,6 +41,7 @@ func definirPrioridade(criticidade string) int {
 	}
 }
 
+// custoPorCriticidade atrela valores de cobrança às requisições com base na criticidade.
 func custoPorCriticidade(criticidade string) int {
 	switch criticidade {
 	case "alta":
@@ -51,10 +53,10 @@ func custoPorCriticidade(criticidade string) int {
 	}
 }
 
+// adicionarRequisicao assina os dados do sensor e remete a requisição à blockchain.
 func adicionarRequisicao(m Mensagem) {
 	valorCusto := custoPorCriticidade(m.Payload)
 
-	// String bruta que será assinada
 	mensagemBruta := fmt.Sprintf("%s:%d:%s", m.ID, valorCusto, m.Acao)
 	assinaturaBytes := ed25519.Sign(chavePrivada, []byte(mensagemBruta))
 
@@ -90,6 +92,7 @@ func adicionarRequisicao(m Mensagem) {
 	log.Printf("[SENSOR] Pedido assinado de %s enviado ao Consenso BFT!\n", m.ID)
 }
 
+// handleSensor executa a lógica de comunicação de entrada do respectivo sensor conectado.
 func handleSensor(m Mensagem, conn net.Conn) {
 	adicionarRequisicao(m)
 	reader := bufio.NewReader(conn)
