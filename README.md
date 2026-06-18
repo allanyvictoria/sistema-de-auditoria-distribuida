@@ -4,28 +4,6 @@ Sistema distribuído e imutável para coordenação de missões de escolta e mon
 
 ---
 
-## Estrutura de Diretórios
-
-```text
-.
-├── broker/
-│   ├── main.go               # Servidores TCP de clientes, Servidor ABCI e API HTTP
-│   ├── abci.go               # App ABCI (CheckTx, FinalizeBlock) e validação criptográfica
-│   ├── api.go                # Endpoints de transparência (/saldos, /extrato, /auditoria)
-│   ├── despacho.go           # Submissão de blocos de DESPACHO via API do CometBFT
-│   ├── drone.go              # Handler TCP dos drones, envio de LIBERACAO e LAUDO
-│   ├── ledger.go             # Histórico imutável de créditos e sistema de cache de saldo
-│   ├── protocolo.go          # Struct Mensagem e parser de strings do TCP
-│   ├── requisicao.go         # Heap de prioridade, aging, struct Requisicao
-│   └── sensor.go             # Handler de conexões dos sensores (navios)
-├── drone/
-│   └── main.go               # Simulação de drone, edge computing (GPS) e heartbeat
-└── sensor/
-    └── main.go               # Terminal do navio, geração de chaves ED25519 e assinaturas
-```
-
----
-
 ## Pacotes e Dependências
 
 A aplicação de estado (Broker/ABCI) expande a biblioteca padrão do Go incorporando pacotes de consenso e criptografia:
