@@ -70,7 +70,7 @@ Substitua `SEU_USUARIO` pela sua imagem no Docker Hub:
 docker run --name broker-app-1 --network pbl-net \
   -p 1053:1053 -p 8080:8080 \
   -e COMET_URL=node0:26657 \
-  SEU_USUARIO/broker-pbl3:v1
+  allanyvictoria/brokert3:v1
 ```
 
 ### 4. Verificar ID do Persistent Peer (Auditoria de Nó)
