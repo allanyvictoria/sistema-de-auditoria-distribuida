@@ -5,15 +5,15 @@ import (
 	"strings"
 )
 
-// Protocolo de comunicação
+// Mensagem define a estrutura do protocolo de comunicação.
 type Mensagem struct {
-	Tipo    string // Quem está enviando: "SENSOR", "DRONE", "BROKER"
-	ID      string // identificador de quem está enviando
-	Acao    string // ação ou evento a ser realizado
-	Payload string // dados extras da mensagem (ex: criticidade, id da requisição, etc)
+	Tipo    string
+	ID      string
+	Acao    string
+	Payload string
 }
 
-// função para parsear a mensagem recebida e retornar uma struct Mensagem
+// ParseMensagem converte uma string formatada em uma estrutura Mensagem.
 func ParseMensagem(linha string) (Mensagem, error) {
 	mensagem := strings.TrimSpace(linha)
 	parts := strings.Split(mensagem, ";")
@@ -30,7 +30,7 @@ func ParseMensagem(linha string) (Mensagem, error) {
 	}, nil
 }
 
-// função para converter uma struct Mensagem em bytes para enviar pela rede
+// ToBytes processa uma estrutura Mensagem em seu equivalente em slice de bytes.
 func ToBytes(m Mensagem) []byte {
 	return []byte(fmt.Sprintf("%s;%s;%s;%s", m.Tipo, m.ID, m.Acao, m.Payload))
 }
