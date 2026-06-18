@@ -11,11 +11,11 @@ import (
 	"github.com/cometbft/cometbft/abci/server"
 )
 
-var rwmu sync.Mutex                                // mutex para proteger acesso a mapas e fila
+var rwmu sync.RWMutex                              // mutex para proteger acesso a mapas e fila
 var mapaDrones = make(map[string]*Drone)           // drones conectados e estado
 var mapaRequisicoes = make(map[string]*Requisicao) // mapa de requisições registradas
 var filaRequisicoes FilaRequisicoes                // heap de prioridade
-var brokerID string // hostname do broker atual
+var brokerID string                                // hostname do broker atual
 
 // função para lidar com conexões de sensores e drones
 func handleConnection(conn net.Conn) {
