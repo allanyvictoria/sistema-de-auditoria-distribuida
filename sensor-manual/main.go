@@ -1,6 +1,3 @@
-### `main.go`
-
-```go
 package main
 
 import (
@@ -234,5 +231,3 @@ func main() {
 	fmt.Println("Par de chaves criptográficas estabelecido para a sessão atual.")
 	menu()
 }
-
-```
