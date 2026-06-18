@@ -130,8 +130,26 @@ Os drones rodam autonomamente. Ao conectar e entrar na rede do broker, emitem la
                                                 └────────────────────────┘
 ```
 
+## Auditoria e Testes de Segurança (Pasta `teste`)
+
+A pasta `teste` contém scripts autônomos desenvolvidos para simular ataques diretos à infraestrutura de consenso. Estes testes validam a robustez do `CheckTx` na interface ABCI, garantindo que o sistema rejeita transações baseadas em chaves criptográficas divergentes, forjadas ou não homologadas.
+
+### 1. Teste de Fraude Financeira (`hacker.go`)
+Simula uma tentativa de roubo de créditos. O script forja uma requisição de transferência de fundos utilizando o nome de uma empresa legítima (vítima), porém assina matematicamente o pacote utilizando uma chave privada gerada aleatoriamente pelo atacante.
+* **Objetivo:** Verificar se a rede recusa a transação ao confrontar a assinatura com a `PublicKey` original vinculada à empresa.
+* **Como executar:**
+  ```bash
+  go run teste/hacker.go
+  ```
+
+### 2. Teste de Injeção de Laudo Falso (`hackerL.go`)
+Simula um ataque cibernético à infraestrutura de drones. O script tenta submeter um bloco tipo `LAUDO` (conclusão de missão) forjando a identidade de um drone inexistente ou não homologado, gerando dados de rota e status de poluição corrompidos.
+* **Objetivo:** Assegurar que o sistema processe unicamente laudos emitidos por drones cujas chaves públicas e identidades foram validadas e registradas na memória do Broker.
+* **Como executar:**
+  ```bash
+  go run teste/hackerL.go
+  ```
 1. **Assinatura:** O Sensor/Navio gera uma transação, anexa o timestamp e assina com a chave privada.
 2. **CheckTx:** A interface ABCI atua como porteira do mempool. Verifica saldos na memória, valida a `PublicKey` no dicionário da rede e confere o *hash* da assinatura matemática.
 3. **Consenso & FinalizeBlock:** O CometBFT sincroniza com os peers. Ao gerar o bloco, o `FinalizeBlock` aplica o débito no `Ledger`, insere na fila e aciona despachos.
 4. **Resiliência de Rede:** Submissões assíncronas do Broker de liberação de drones contam com tolerância a *rollbacks* na fila local (via goroutines) se o endpoint HTTP do CometBFT demorar a responder.
-```
