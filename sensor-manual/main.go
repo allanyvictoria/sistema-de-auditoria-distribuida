@@ -1,3 +1,6 @@
+### `main.go`
+
+```go
 package main
 
 import (
@@ -47,7 +50,7 @@ type PayloadTransacao struct {
 	Acao         string `json:"acao"`
 	Timestamp    string `json:"timestamp"`
 	ChavePublica string `json:"chave_publica"`
-	Assinatura   string `json:"assinatura"`
+	Assinatura   string `json:"add_assinatura"`
 }
 
 type PayloadTransferencia struct {
@@ -74,6 +77,7 @@ func init() {
 	}
 }
 
+// enviarParaCometBFT transmite o pacote estruturado ao nó do ecossistema CometBFT via requisição HTTP.
 func enviarParaCometBFT(pacote PacoteBase) {
 	pacoteBytes, _ := json.Marshal(pacote)
 	txHex := fmt.Sprintf("0x%s", hex.EncodeToString(pacoteBytes))
@@ -87,24 +91,27 @@ func enviarParaCometBFT(pacote PacoteBase) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	// Checa se o CheckTx barrou a transação (Code > 0)
+	
+	// Validação do código de retorno obtido do processo CheckTx.
 	if strings.Contains(string(body), `"code":0`) {
-		fmt.Println("Transação aceita e gravada no bloco!")
+		fmt.Println("Transação aceita e registrada no bloco.")
 	} else {
-		fmt.Printf("Transação REJEITADA pelo nó! Resposta bruta: %s\n", string(body))
+		fmt.Printf("Transação rejeitada pelo nó. Resposta: %s\n", string(body))
 	}
 }
 
+// registrarEmpresa encaminha a requisição de inicialização e registro da respectiva companhia à rede.
 func registrarEmpresa() {
 	txPayload := PayloadRegistro{
 		Empresa: minhaEmpresa,
 	}
 	txBytes, _ := json.Marshal(txPayload)
 
-	fmt.Println("Enviando pedido de registro para a Blockchain (Garantindo 100 créditos)...")
+	fmt.Println("Enviando pedido de registro para a blockchain...")
 	enviarParaCometBFT(PacoteBase{Tipo: BlocoRegistro, Data: txBytes})
 }
 
+// transferirCreditos realiza os procedimentos de coleta de parâmetros e assinatura para a transferência de fundos.
 func transferirCreditos(reader *bufio.Reader) {
 	fmt.Print("Empresa de destino (ex: Navio_B): ")
 	destino, _ := reader.ReadString('\n')
@@ -120,7 +127,7 @@ func transferirCreditos(reader *bufio.Reader) {
 		return
 	}
 
-	// Assina a transferência: origem, destino e valor
+	// Processamento da assinatura digital contendo os parâmetros de origem, destino e valor.
 	mensagemBruta := fmt.Sprintf("%s:%s:%d", minhaEmpresa, destino, valor)
 	assinaturaBytes := ed25519.Sign(chavePrivada, []byte(mensagemBruta))
 
@@ -133,10 +140,11 @@ func transferirCreditos(reader *bufio.Reader) {
 	}
 	txBytes, _ := json.Marshal(txPayload)
 
-	fmt.Printf("Assinando e enviando transferência de %d créditos para %s...\n", valor, destino)
+	fmt.Printf("Enviando transferência de %d créditos para %s...\n", valor, destino)
 	enviarParaCometBFT(PacoteBase{Tipo: BlocoTransferencia, Data: txBytes})
 }
 
+// custoPorCriticidade calcula o valor de débito operacional com base no grau de criticidade.
 func custoPorCriticidade(criticidade string) int {
 	switch criticidade {
 	case "alta":
@@ -148,8 +156,8 @@ func custoPorCriticidade(criticidade string) int {
 	}
 }
 
+// solicitarMissao gera e assina dinamicamente um pedido de processo de missão simulado por sensores.
 func solicitarMissao() {
-
 	tipos := []string{
 		"deriva",
 		"bloqueio_rota",
@@ -166,10 +174,10 @@ func solicitarMissao() {
 	criticidade := nivelcriticidade
 	valorCusto := custoPorCriticidade(criticidade)
 
-	// Gera um timestamp único em nanosegundos
+	// Geração de carimbo de data/hora em escala de nanossegundos.
 	timestampAtual := fmt.Sprintf("%d", time.Now().UnixNano())
 
-	// Assina incluindo o timestamp
+	// Vinculação criptográfica dos dados da mensagem com a inclusão do timestamp.
 	mensagemBruta := fmt.Sprintf("%s:%d:%s:%s", minhaEmpresa, valorCusto, acao, timestampAtual)
 	assinaturaBytes := ed25519.Sign(chavePrivada, []byte(mensagemBruta))
 
@@ -178,7 +186,7 @@ func solicitarMissao() {
 		Valor:        valorCusto,
 		Criticidade:  criticidade,
 		Acao:         acao,
-		Timestamp:    timestampAtual, // <--- Envia no JSON
+		Timestamp:    timestampAtual,
 		ChavePublica: hex.EncodeToString(chavePublica),
 		Assinatura:   hex.EncodeToString(assinaturaBytes),
 	}
@@ -188,6 +196,7 @@ func solicitarMissao() {
 	enviarParaCometBFT(PacoteBase{Tipo: BlocoTransacao, Data: txBytes})
 }
 
+// menu gerencia a interface de linha de comando e o fluxo de chamadas do sistema.
 func menu() {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Digite o nome da sua Companhia (ex: Navio_A): ")
@@ -196,8 +205,8 @@ func menu() {
 
 	for {
 		fmt.Printf("\n--- TERMINAL DO SENSOR: %s ---\n", minhaEmpresa)
-		fmt.Println("1. Emitir Créditos Iniciais (Imprimir Dinheiro)")
-		fmt.Println("2. Solicitar Missão (Custa 1-3 créditos conforme criticidade)")
+		fmt.Println("1. Emitir Créditos Iniciais")
+		fmt.Println("2. Solicitar Missão")
 		fmt.Println("3. Transferir Créditos para outra Empresa")
 		fmt.Println("4. Sair")
 		fmt.Print("Escolha uma opção: ")
@@ -213,7 +222,7 @@ func menu() {
 		case "3":
 			transferirCreditos(reader)
 		case "4":
-			fmt.Println("Saindo...")
+			fmt.Println("Encerrando terminal.")
 			return
 		default:
 			fmt.Println("Opção inválida.")
@@ -222,6 +231,8 @@ func menu() {
 }
 
 func main() {
-	fmt.Println("Chave criptográfica gerada para esta sessão.")
+	fmt.Println("Par de chaves criptográficas estabelecido para a sessão atual.")
 	menu()
 }
+
+```
