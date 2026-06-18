@@ -31,19 +31,20 @@ type PayloadLaudo struct {
 	Assinatura   string `json:"assinatura"`
 }
 
+// main executa a simulação de injeção de laudo fraudulento na rede.
 func main() {
-	fmt.Println(" INICIANDO ATAQUE DE INFRAESTRUTURA (INJEÇÃO DE LAUDO) ")
+	fmt.Println("INICIANDO ATAQUE DE INFRAESTRUTURA (INJEÇÃO DE LAUDO)")
 
-	// 1. O Hacker gera uma chave descartável para assinar o pacote falso
+	// Geração de chave criptográfica não autorizada para assinatura do pacote.
 	pubKeyHacker, privKeyHacker, _ := ed25519.GenerateKey(cryptorand.Reader)
 
-	alvoReqID := "Navio_B-123456789" // ID fictício
+	alvoReqID := "Navio_B-123456789"
 	droneFalso := "DRONE_FANTASMA_007"
 	timestampAtual := fmt.Sprintf("%d", time.Now().Unix())
 
 	fmt.Printf("Alvo: %s | Drone Atacante: %s\n", alvoReqID, droneFalso)
 
-	// 2. Monta a string bruta e assina com a chave hacker
+	// Estruturação da mensagem bruta e aplicação da assinatura com a chave do atacante.
 	mensagemBruta := fmt.Sprintf("%s:%s:%s", alvoReqID, droneFalso, timestampAtual)
 	assinaturaForjada := ed25519.Sign(privKeyHacker, []byte(mensagemBruta))
 
@@ -61,11 +62,10 @@ func main() {
 	pacoteBytes, _ := json.Marshal(PacoteBase{Tipo: BlocoLaudo, Data: txBytes})
 	txHex := fmt.Sprintf("0x%s", hex.EncodeToString(pacoteBytes))
 
-	// Endereço padrão do PC 1 no laboratório
 	ipDoNo := "172.16.201.1:26657"
 	url := fmt.Sprintf("http://%s/broadcast_tx_commit?tx=%s", ipDoNo, txHex)
 
-	fmt.Println("Forçando envio do Laudo falso diretamente ao consenso do nó...")
+	fmt.Println("Submetendo laudo forjado diretamente ao consenso do nó...")
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Erro de conexão: %v\n", err)
@@ -76,12 +76,12 @@ func main() {
 	body, _ := io.ReadAll(resp.Body)
 	respostaString := string(body)
 
-	// Avalia a resposta baseada nos códigos de rejeição do CheckTx
+	// Verificação do código de resposta do CheckTx para validar a rejeição.
 	if strings.Contains(respostaString, `"code":3`) || strings.Contains(respostaString, `"code": 3`) {
-		fmt.Println("SUCESSO: A blockchain (Broker) identificou a fraude e rejeitou o laudo!")
+		fmt.Println("SUCESSO: A blockchain identificou a fraude e rejeitou o laudo.")
 		fmt.Printf("Motivo do bloqueio: %s\n", respostaString)
 	} else if strings.Contains(respostaString, `"code":0`) {
-		fmt.Println("FALHA DE SEGURANÇA: A rede engoliu o laudo do Drone Fantasma!")
+		fmt.Println("FALHA DE SEGURANÇA: A rede validou o laudo de origem desconhecida.")
 	} else {
 		fmt.Printf("Resposta inesperada do nó: %s\n", respostaString)
 	}
