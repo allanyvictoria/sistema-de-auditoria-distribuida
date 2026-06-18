@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Drone define a estrutura e o estado de conexão de um drone.
 type Drone struct {
 	ID              string
 	Conn            net.Conn
@@ -19,8 +20,7 @@ type Drone struct {
 	UltimoHeartbeat time.Time
 }
 
-// submeterLiberacao envia um BlocoLiberacao ao consenso.
-// Roda I/O de rede em uma goroutine para NÃO travar o rwmu do broker.
+// submeterLiberacao submete um bloco de liberação à rede de consenso.
 func submeterLiberacao(reqID, motivo string) {
 	payload := PayloadLiberacao{
 		RequisicaoID: reqID,
@@ -50,10 +50,10 @@ func submeterLiberacao(reqID, motivo string) {
 	}()
 }
 
+// handleDrone processa as conexões e o ciclo de vida dos drones.
 func handleDrone(m Mensagem, conn net.Conn) {
 	rwmu.Lock()
 
-	// O payload do registro agora pode trazer a requisição pendurada do drone reconectando
 	reqAnterior := m.Payload
 
 	novoDrone := &Drone{
@@ -66,10 +66,10 @@ func handleDrone(m Mensagem, conn net.Conn) {
 	mapaDrones[m.ID] = novoDrone
 	fmt.Printf("[BROKER] Novo drone conectado: %s - TOTAL: %d\n", m.ID, len(mapaDrones))
 
-	// Trata o caso de reconexão: o drone diz que estava no meio de uma missão
+	// Solicita liberação de missão presa em casos de reconexão do drone
 	if reqAnterior != "" {
 		if req, existe := mapaRequisicoes[reqAnterior]; existe && req.Status == "em atendimento" {
-			fmt.Printf("[REDE] 🔄 Drone %s reconectou com a missão %s pendurada! Solicitando liberação via consenso...\n", m.ID, reqAnterior)
+			fmt.Printf("[REDE] Drone %s reconectou com a missão %s pendente. Solicitando liberação via consenso...\n", m.ID, reqAnterior)
 			submeterLiberacao(reqAnterior, "broker_caiu_drone_reconectou")
 		}
 	}
@@ -153,6 +153,7 @@ func handleDrone(m Mensagem, conn net.Conn) {
 	}
 }
 
+// verificarHeartbeat monitora o tempo de inatividade dos drones e encerra conexões expiradas.
 func verificarHeartbeat() {
 	for {
 		time.Sleep(10 * time.Second)
@@ -169,12 +170,9 @@ func verificarHeartbeat() {
 					if req != nil {
 						switch req.Status {
 						case "em atendimento":
-							// A mágica acontece aqui: não mexe mais na heap. Chama o consenso!
-							fmt.Printf("[HEARTBEAT] 🚨 Drone %s caiu durante a missão %s! Submetendo liberação...\n", drone.ID, reqPendente)
+							fmt.Printf("[HEARTBEAT] Drone %s desconectado durante a missão %s. Submetendo liberação...\n", drone.ID, reqPendente)
 							submeterLiberacao(reqPendente, "drone_caiu")
 						case "reservado":
-							// Se estava apenas "reservado" localmente (sem bloco confirmado),
-							// basta devolver para pendente localmente, pois nunca saiu da heap.
 							req.Status = "pendente"
 							req.DroneID = ""
 						}
