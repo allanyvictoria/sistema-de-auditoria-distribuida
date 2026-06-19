@@ -2,8 +2,42 @@
 
 Sistema distribuído e imutável para coordenação de missões de escolta e monitoramento marítimo via drones autônomos. A aplicação utiliza **CometBFT** como motor de consenso (Byzantine Fault Tolerance) e a interface **ABCI** escrita em Go para gerenciar um *Ledger* criptográfico, validar assinaturas digitais (ED25519) e assegurar a transparência de créditos e laudos de missões.
 
----
+## Estrutura de Diretórios
 
+```
+.
+├── docker-compose.yml
+├── README.md
+├── broker/
+│   ├── Dockerfile
+│   ├── go.mod
+│   ├── go.sum
+│   ├── main.go          # Bootstrap: sobe servidor ABCI (26658), API HTTP (8080) e TCP (1053)
+│   ├── abci.go           # Aplicação ABCI: CheckTx (validação) e FinalizeBlock (execução)
+│   ├── ledger.go         # Histórico imutável de créditos e derivação de saldo
+│   ├── api.go            # Endpoints de transparência: /saldos, /extrato, /missoes, /auditoria
+│   ├── despacho.go       # Reserva otimista local + submissão de BlocoDespacho ao consenso
+│   ├── drone.go          # Registro, heartbeat, ACEITE/CONCLUSAO e emissão do laudo
+│   ├── sensor.go         # Recepção de requisições e submissão de BlocoTransacao assinado
+│   ├── requisicao.go     # Struct Requisicao, fila de prioridade (heap) e aging
+│   └── protocolo.go      # Struct Mensagem e parser do protocolo TCP
+├── drone/
+│   ├── Dockerfile
+│   ├── go.mod
+│   └── main.go           # Conecta ao broker, heartbeat, executa missão e gera rota GPS
+├── sensor-manual/
+│   ├── Dockerfile
+│   ├── go.mod
+│   └── main.go           # Terminal interativo: registro, missão e transferência de créditos
+├── teste/
+│   ├── hacker.go         # Tenta forjar transferência de créditos (teste de fraude)
+│   └── hackerL.go        # Tenta injetar laudo falso de drone fantasma (teste de fraude)
+└── minha-rede/
+    ├── node0/config/     # Configuração e chaves do nó CometBFT 0 (genesis, validador)
+    ├── node1/config/     # Configuração e chaves do nó CometBFT 1
+    ├── node2/config/     # Configuração e chaves do nó CometBFT 2
+    └── node3/config/     # Configuração e chaves do nó CometBFT 3
+```
 ## Pacotes e Dependências
 
 A aplicação de estado (Broker/ABCI) expande a biblioteca padrão do Go incorporando pacotes de consenso e criptografia:
