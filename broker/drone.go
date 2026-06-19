@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// Drone define a estrutura e o estado de conexão de um drone.
 type Drone struct {
 	ID              string
 	Conn            net.Conn
@@ -20,7 +19,8 @@ type Drone struct {
 	UltimoHeartbeat time.Time
 }
 
-// submeterLiberacao submete um bloco de liberação à rede de consenso.
+// submeterLiberacao envia um BlocoLiberacao ao consenso.
+// Roda I/O de rede em uma goroutine para NÃO travar o rwmu do broker.
 func submeterLiberacao(reqID, motivo string) {
 	payload := PayloadLiberacao{
 		RequisicaoID: reqID,
@@ -50,20 +50,12 @@ func submeterLiberacao(reqID, motivo string) {
 	}()
 }
 
-<<<<<<< HEAD
-// handleDrone processa as conexões e o ciclo de vida dos drones.
-func handleDrone(m Mensagem, conn net.Conn) {
-	rwmu.Lock()
-
-	reqAnterior := m.Payload
-=======
 // handleDrone gerencia a comunicação contínua com um drone específico após o registro inicial.
 func handleDrone(m Mensagem, conn net.Conn) {
 	rwmu.Lock()
 
 	// O Payload da mensagem inicial de REGISTRO agora contém a Chave Pública do drone
 	chavePublicaDrone := m.Payload
->>>>>>> 39cd027 (Atualizados e comentados)
 
 	novoDrone := &Drone{
 		ID:              m.ID,
@@ -74,21 +66,11 @@ func handleDrone(m Mensagem, conn net.Conn) {
 	}
 	mapaDrones[m.ID] = novoDrone
 
-<<<<<<< HEAD
-	// Solicita liberação de missão presa em casos de reconexão do drone
-	if reqAnterior != "" {
-		if req, existe := mapaRequisicoes[reqAnterior]; existe && req.Status == "em atendimento" {
-			fmt.Printf("[REDE] Drone %s reconectou com a missão %s pendente. Solicitando liberação via consenso...\n", m.ID, reqAnterior)
-			submeterLiberacao(reqAnterior, "broker_caiu_drone_reconectou")
-		}
-	}
-=======
 	// Regista a chave pública do drone no mapa global que a ABCI consulta.
 	// Sem isto, o CheckTx da blockchain rejeitará o laudo no final da missão.
 	mapaChavesDrones[m.ID] = chavePublicaDrone
 
 	fmt.Printf("[BROKER] Novo drone conectado e homologado: %s - TOTAL: %d\n", m.ID, len(mapaDrones))
->>>>>>> 39cd027 (Atualizados e comentados)
 
 	despacharDrone()
 	rwmu.Unlock()
@@ -180,11 +162,7 @@ func handleDrone(m Mensagem, conn net.Conn) {
 	}
 }
 
-<<<<<<< HEAD
-// verificarHeartbeat monitora o tempo de inatividade dos drones e encerra conexões expiradas.
-=======
 // funcao para verificar periodicamente os heartbeats dos drones e lidar com desconexões
->>>>>>> 39cd027 (Atualizados e comentados)
 func verificarHeartbeat() {
 	for {
 		time.Sleep(10 * time.Second)
@@ -201,11 +179,7 @@ func verificarHeartbeat() {
 					if req != nil {
 						switch req.Status {
 						case "em atendimento":
-<<<<<<< HEAD
-							fmt.Printf("[HEARTBEAT] Drone %s desconectado durante a missão %s. Submetendo liberação...\n", drone.ID, reqPendente)
-=======
 							fmt.Printf("[HEARTBEAT] Drone %s caiu durante a missão %s! Submetendo liberação...\n", drone.ID, reqPendente)
->>>>>>> 39cd027 (Atualizados e comentados)
 							submeterLiberacao(reqPendente, "drone_caiu")
 						case "reservado":
 							req.Status = "pendente"
