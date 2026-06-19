@@ -1,4 +1,4 @@
-# Escolta Marítima Autônoma — Infraestrutura Blockchain com Drones
+# Escolta Marítima Autônoma - Infraestrutura Blockchain com Drones
 
 Sistema distribuído e imutável para coordenação de missões de escolta e monitoramento marítimo via drones autônomos. A aplicação utiliza **CometBFT** como motor de consenso (Byzantine Fault Tolerance) e a interface **ABCI** escrita em Go para gerenciar um *Ledger* criptográfico, validar assinaturas digitais (ED25519) e assegurar a transparência de créditos e laudos de missões.
 
