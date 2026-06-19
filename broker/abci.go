@@ -13,8 +13,9 @@ import (
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 )
 
-var mapaChavesPublicas = make(map[string]string)
-var mapaChavesDrones = make(map[string]string)
+// Dicionários globais de chaves públicas (Protegidos pelo ecossistema do Broker)
+var mapaChavesPublicas = make(map[string]string) // Chaves das Empresas/Navios
+var mapaChavesDrones = make(map[string]string)   // Chaves dos Drones Homologados
 
 type TipoBloco string
 
@@ -76,7 +77,6 @@ type PayloadLiberacao struct {
 	Motivo       string `json:"motivo"`
 }
 
-// DronesApp implementa as regras da interface Application do ABCI.
 type DronesApp struct {
 	abcitypes.BaseApplication
 	ledger *Ledger
@@ -84,27 +84,19 @@ type DronesApp struct {
 
 var _ abcitypes.Application = (*DronesApp)(nil)
 
-// NovaDronesApp retorna a aplicação configurada com a devida injeção de dependências.
 func NovaDronesApp(l *Ledger) *DronesApp {
 	return &DronesApp{ledger: l}
 }
 
-<<<<<<< HEAD
-// CheckTx valida as transações recebidas antes que as mesmas entrem no mempool.
-=======
 // CheckTx é a função de validação pré-consenso. Ela é chamada para cada transação recebida, antes de ser incluída em um bloco.
->>>>>>> 39cd027 (Atualizados e comentados)
 func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx) (*abcitypes.ResponseCheckTx, error) {
 	var pacote PacoteBase
 	if err := json.Unmarshal(req.Tx, &pacote); err != nil {
 		return &abcitypes.ResponseCheckTx{Code: 1, Log: "JSON malformado"}, nil
 	}
 
-<<<<<<< HEAD
-=======
 	// Para os blocos de DESPACHO e LIBERAÇÃO, a validação é mais leve, pois eles só podem ser originados internamente
 	// pelo Broker, e não por transações externas.
->>>>>>> 39cd027 (Atualizados e comentados)
 	if pacote.Tipo == BlocoDespacho || pacote.Tipo == BlocoLiberacao {
 		return &abcitypes.ResponseCheckTx{Code: 0, Log: "Bloco interno aprovado"}, nil
 	}
@@ -132,20 +124,12 @@ func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 		rwmu.RUnlock()
 
 		if chaveReal == "" {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] BLOQUEADO: Empresa %s não enviou chave no registro.\n", tx.Empresa)
-=======
 			log.Printf("[ABCI - CheckTx]   BLOQUEADO: Empresa %s não enviou chave no registro!\n", tx.Empresa)
->>>>>>> 39cd027 (Atualizados e comentados)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Empresa nao registrada na memoria"}, nil
 		}
 
 		if chaveReal != tx.ChavePublica {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] INCONSISTÊNCIA: Chave pública difere para %s.\n", tx.Empresa)
-=======
 			log.Printf("[ABCI - CheckTx]   HACKER DETECTADO: Chave pública falsa para %s!\n", tx.Empresa)
->>>>>>> 39cd027 (Atualizados e comentados)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Chave publica não pertence à empresa"}, nil
 		}
 
@@ -155,13 +139,13 @@ func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 
 		// Verifica a assinatura digital da transação para garantir que ela foi realmente autorizada pela empresa.
 		if !ed25519.Verify(pubKeyBytes, []byte(mensagemBruta), assinaturaBytes) {
-			log.Printf("[ABCI - CheckTx] ASSINATURA INVÁLIDA para a empresa %s.\n", tx.Empresa)
+			log.Printf("[ABCI - CheckTx] FRAUDE DETECTADA: Assinatura inválida para %s.\n", tx.Empresa)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Assinatura inválida"}, nil
 		}
 
 		// Verifica se a empresa tem saldo suficiente para a transação. Se não tiver, rejeita a transação.
 		if !app.ledger.VerificarCreditos(tx.Empresa, tx.Valor) {
-			log.Printf("[ABCI - CheckTx] REJEITADO: Empresa %s sem créditos suficientes.\n", tx.Empresa)
+			log.Printf("[ABCI - CheckTx] REJEITADO: Empresa %s sem créditos.\n", tx.Empresa)
 			return &abcitypes.ResponseCheckTx{Code: 2, Log: "Saldo insuficiente"}, nil
 		}
 		log.Printf("[ABCI - CheckTx] APROVADO: Assinatura validada e saldo de %s verificado.\n", tx.Empresa)
@@ -177,20 +161,12 @@ func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 		rwmu.RUnlock()
 
 		if chaveReal == "" {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] BLOQUEADO: Empresa %s não enviou chave no registro.\n", tx.Origem)
-=======
 			log.Printf("[ABCI - CheckTx]   BLOQUEADO: Empresa %s não enviou chave no registro!\n", tx.Origem)
->>>>>>> 39cd027 (Atualizados e comentados)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Empresa nao registrada na memoria"}, nil
 		}
 
 		if chaveReal != tx.ChavePublica {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] INCONSISTÊNCIA: Chave não confere para a empresa %s.\n", tx.Origem)
-=======
 			log.Printf("[ABCI - CheckTx]   TENTATIVA DE ROUBO! Chave falsa detectada para %s!\n", tx.Origem)
->>>>>>> 39cd027 (Atualizados e comentados)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Chave publica não pertence à empresa"}, nil
 		}
 
@@ -199,12 +175,12 @@ func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 		mensagemBruta := fmt.Sprintf("%s:%s:%d", tx.Origem, tx.Destino, tx.Valor)
 
 		if !ed25519.Verify(pubKeyBytes, []byte(mensagemBruta), assinaturaBytes) {
-			log.Printf("[ABCI - CheckTx] ASSINATURA INVÁLIDA: Falha na validação de transferência de %s.\n", tx.Origem)
+			log.Printf("[ABCI - CheckTx] FRAUDE DETECTADA: Transferência não autorizada por %s.\n", tx.Origem)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Assinatura inválida"}, nil
 		}
 
 		if !app.ledger.VerificarCreditos(tx.Origem, tx.Valor) {
-			log.Printf("[ABCI - CheckTx] REJEITADO: %s não possui saldo necessário.\n", tx.Origem)
+			log.Printf("[ABCI - CheckTx] REJEITADO: %s está sem saldo para a transferência.\n", tx.Origem)
 			return &abcitypes.ResponseCheckTx{Code: 2, Log: "Saldo insuficiente"}, nil
 		}
 
@@ -214,50 +190,32 @@ func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 			return &abcitypes.ResponseCheckTx{Code: 1, Log: "Erro no unmarshal"}, nil
 		}
 
-<<<<<<< HEAD
-=======
 		// TRAVA CONTRA HACKER: O Drone existe no sistema e a chave bate?
->>>>>>> 39cd027 (Atualizados e comentados)
 		rwmu.RLock()
 		chaveRealDrone := mapaChavesDrones[tx.DroneID]
 		rwmu.RUnlock()
 
 		if chaveRealDrone == "" {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] BLOQUEADO: Drone %s não possui homologação de chaves.\n", tx.DroneID)
-=======
 			log.Printf("[ABCI - CheckTx]   BLOQUEADO: Drone %s não está homologado nesta sessão!\n", tx.DroneID)
->>>>>>> 39cd027 (Atualizados e comentados)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Drone nao homologado na rede"}, nil
 		}
 
 		if chaveRealDrone != tx.ChavePublica {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] INCONSISTÊNCIA: Chave pública não verificada para Drone %s.\n", tx.DroneID)
-			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Chave publica nao pertence ao drone"}, nil
-		}
-
-=======
 			log.Printf("[ABCI - CheckTx]   FRAUDE: Chave pública falsa para o Drone %s!\n", tx.DroneID)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Chave publica nao pertence ao drone"}, nil
 		}
 
 		// Verifica a assinatura matemática do Laudo (RequisicaoID:DroneID:Timestamp)
->>>>>>> 39cd027 (Atualizados e comentados)
 		pubKeyBytes, _ := hex.DecodeString(tx.ChavePublica)
 		assinaturaBytes, _ := hex.DecodeString(tx.Assinatura)
 		mensagemBruta := fmt.Sprintf("%s:%s:%s", tx.RequisicaoID, tx.DroneID, tx.Timestamp)
 
 		if !ed25519.Verify(pubKeyBytes, []byte(mensagemBruta), assinaturaBytes) {
-<<<<<<< HEAD
-			log.Printf("[ABCI - CheckTx] ASSINATURA INVÁLIDA: Laudo corrompido ou mal assinado para Drone %s.\n", tx.DroneID)
-=======
 			log.Printf("[ABCI - CheckTx]   FRAUDE: Assinatura do laudo corrompida para o Drone %s.\n", tx.DroneID)
->>>>>>> 39cd027 (Atualizados e comentados)
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Assinatura do laudo invalida"}, nil
 		}
 
-		log.Printf("[ABCI - CheckTx] Laudo do Drone %s validado criptograficamente.\n", tx.DroneID)
+		log.Printf("[ABCI - CheckTx] Laudo do Drone %s verificado com sucesso. Indo para consenso.\n", tx.DroneID)
 
 	case BlocoDespacho:
 		var tx PayloadDespacho
@@ -298,12 +256,8 @@ func (app *DronesApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 	return &abcitypes.ResponseCheckTx{Code: 0}, nil
 }
 
-<<<<<<< HEAD
-// FinalizeBlock aplica o estado definitivo do bloco às estruturas de memória.
-=======
 // FinalizeBlock é a função de execução pós-consenso. Ela é chamada para cada bloco que foi
 // acordado pelo consenso, e é onde as transações são realmente aplicadas ao estado do aplicativo.
->>>>>>> 39cd027 (Atualizados e comentados)
 func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestFinalizeBlock) (*abcitypes.ResponseFinalizeBlock, error) {
 	txResults := make([]*abcitypes.ExecTxResult, len(req.Txs))
 
@@ -322,7 +276,7 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 			rwmu.Unlock()
 
 			app.ledger.RegistrarEmpresa(tx.Empresa, 100)
-			fmt.Printf("[BLOCKCHAIN] Registro: %s inserido. Chave vinculada: [%s]\n", tx.Empresa, tx.ChavePublica)
+			fmt.Printf("[BLOCKCHAIN] Registro: %s entrou. Chave real gravada: [%s]\n", tx.Empresa, tx.ChavePublica)
 
 		case BlocoTransacao:
 			var tx PayloadTransacao
@@ -330,7 +284,7 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 
 			err := app.ledger.DebitarCreditos(tx.Empresa, tx.Valor, fmt.Sprintf("Missão %s (%s)", tx.Acao, tx.Criticidade))
 			if err == nil {
-				fmt.Printf("[BLOCKCHAIN] Débito processado - Empresa: %s | Valor: %d\n", tx.Empresa, tx.Valor)
+				fmt.Printf("[BLOCKCHAIN] Débito confirmado! Empresa: %s | Valor: %d\n", tx.Empresa, tx.Valor)
 				novaReq := &Requisicao{
 					ID:          fmt.Sprintf("%s-%s", tx.Empresa, tx.Timestamp),
 					Tipo:        tx.Acao,
@@ -343,7 +297,7 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 				rwmu.Lock()
 				mapaRequisicoes[novaReq.ID] = novaReq
 				heap.Push(&filaRequisicoes, novaReq)
-				fmt.Printf("[FILA] Requisicao armazenada: %s | Fila atual: %d\n", novaReq.ID, filaRequisicoes.Len())
+				fmt.Printf("[FILA] Inserida pós-consenso: Req %s | Tamanho atual da Fila: %d\n", novaReq.ID, filaRequisicoes.Len())
 				despacharDrone()
 				rwmu.Unlock()
 			}
@@ -355,7 +309,7 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 			rwmu.Lock()
 			if err := app.ledger.DebitarCreditos(tx.Origem, tx.Valor, fmt.Sprintf("Transferência para %s", tx.Destino)); err == nil {
 				app.ledger.CreditarCreditos(tx.Destino, tx.Valor, "TRANSFERENCIA_RECEBE", fmt.Sprintf("Recebido de %s", tx.Origem))
-				fmt.Printf("[BLOCKCHAIN] Transferência computada: %s enviou %d para %s\n", tx.Origem, tx.Valor, tx.Destino)
+				fmt.Printf("[BLOCKCHAIN] Transferência: %s enviou %d para %s\n", tx.Origem, tx.Valor, tx.Destino)
 			}
 			rwmu.Unlock()
 
@@ -377,12 +331,8 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 					drone.RequisicaoAtual = ""
 				}
 			}
-<<<<<<< HEAD
-			fmt.Printf("[BLOCKCHAIN] Laudo gravado. Status de Drone modificado: %s\n", laudo.DroneID)
-=======
 
 			fmt.Printf("[BLOCKCHAIN] LAUDO CONFIRMADO E GRAVADO EM BLOCO | Drone: %s\n", laudo.DroneID)
->>>>>>> 39cd027 (Atualizados e comentados)
 			despacharDrone()
 			rwmu.Unlock()
 
@@ -407,7 +357,7 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 				if tx.BrokerID == brokerID {
 					if drone, ok := mapaDrones[tx.DroneID]; ok {
 						drone.Conn.Write([]byte(fmt.Sprintf("BROKER;%s;MISSAO;%s\n", brokerID, req.ID)))
-						fmt.Printf("[FILA] Despacho de requisição %s atribuído a %s\n", req.ID, tx.DroneID)
+						fmt.Printf("[FILA] Despacho confirmado: Req %s -> Drone %s\n", req.ID, tx.DroneID)
 					}
 				}
 			} else if existe && tx.BrokerID == brokerID {
@@ -429,7 +379,7 @@ func (app *DronesApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 				req.DroneID = ""
 				req.BrokerOrigem = ""
 				heap.Push(&filaRequisicoes, req)
-				fmt.Printf("[FILA] Requisição %s retornou à fila de processos.\n", req.ID)
+				fmt.Printf("[FILA] Req %s devolvida à fila.\n", req.ID)
 				despacharDrone()
 			}
 			rwmu.Unlock()
